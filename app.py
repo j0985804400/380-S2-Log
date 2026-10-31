@@ -149,8 +149,6 @@ def generate_kertz_excel(year: int, month: int):
 
     roc_year = year - 1911
     ws.row_dimensions[3].height = 24
-    
-    # 修正：加上換行符號 \n，讓「行車」與「日誌」完美上下排列
     ws["A3"] = "行車\n日誌"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_center
@@ -228,8 +226,10 @@ def generate_kertz_excel(year: int, month: int):
 
 # ================= 前端介面 =================
 st.set_page_config(page_title="380-S2 智慧行車日誌", page_icon="🚛", layout="centered")
-st.title("🚛 380-S2 行車日誌管理系統")
-st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
+
+# 這裡把大標題簡化，避免手機螢幕太窄擠成兩行不好看
+st.title("🚛 行車日誌管理系統")
+st.caption("連線狀態：🟢 Google Sheets 雲端連線成功 ｜ 車牌：380-S2")
 
 c_dash1, c_dash2 = st.columns(2)
 with c_dash1:
