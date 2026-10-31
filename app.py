@@ -70,15 +70,14 @@ def load_data():
 
 load_data()
 
-latest_log = st.session_state.daily_logs[-1]
-latest_return_mileage = int(latest_log["返廠里程"])
-latest_fuel_log = st.session_state.fuel_logs[-1]
-latest_fuel_mileage = int(latest_fuel_log["加油里程"])
-
 # ================= 動態保養預測邏輯 =================
-def calculate_service_prediction(logs, current_mileage, target_mileage):
+def calculate_service_prediction(logs, target_mileage):
     if len(logs) < 2: return "資料不足"
-    recent_logs = logs[-7:] if len(logs) >= 7 else logs
+    # 強制將資料按日期排序，確保就算補登也能抓到正確的「最新」里程
+    sorted_logs = sorted(logs, key=lambda x: str(x.get("日期", "")))
+    current_mileage = int(sorted_logs[-1].get("返廠里程", 0))
+    recent_logs = sorted_logs[-7:] if len(sorted_logs) >= 7 else sorted_logs
+    
     try:
         first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
         last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
@@ -95,13 +94,12 @@ def calculate_service_prediction(logs, current_mileage, target_mileage):
     except:
         return "計算中"
 
-est_service_date = calculate_service_prediction(st.session_state.daily_logs, latest_return_mileage, SERVICE_TARGET)
-
 # ================= 動態尿素預測邏輯 =================
 def calculate_urea_prediction(urea_logs, logs):
     if len(urea_logs) < 1 or len(logs) < 2: return "資料不足"
+    sorted_logs = sorted(logs, key=lambda x: str(x.get("日期", "")))
     try:
-        recent_logs = logs[-7:] if len(logs) >= 7 else logs
+        recent_logs = sorted_logs[-7:] if len(sorted_logs) >= 7 else sorted_logs
         first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
         last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
         days_diff = (last_date - first_date).days
@@ -109,7 +107,9 @@ def calculate_urea_prediction(urea_logs, logs):
         mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
         avg_daily_km = mileage_diff / days_diff
         if avg_daily_km <= 0: return "里程未增加"
-        last_urea = urea_logs[-1]
+
+        sorted_urea = sorted(urea_logs, key=lambda x: str(x.get("添加日期", "")))
+        last_urea = sorted_urea[-1]
         liters = float(last_urea.get("公升數", 20))
         km_per_liter = 50 
         total_range_km = liters * km_per_liter
@@ -119,6 +119,16 @@ def calculate_urea_prediction(urea_logs, logs):
     except:
         return "計算中"
 
+# 取得經過排序後的最新車況數值 (防錯機制)
+sorted_all_logs = sorted(st.session_state.daily_logs, key=lambda x: str(x.get("日期", "")))
+latest_log = sorted_all_logs[-1]
+latest_return_mileage = int(latest_log["返廠里程"])
+
+sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: str(x.get("加油日期", "")))
+latest_fuel_log = sorted_fuel_logs[-1]
+latest_fuel_mileage = int(latest_fuel_log["加油里程"])
+
+est_service_date = calculate_service_prediction(st.session_state.daily_logs, SERVICE_TARGET)
 est_urea_date = calculate_urea_prediction(st.session_state.urea_logs, st.session_state.daily_logs)
 
 # ================= 智慧加油均算邏輯 =================
@@ -211,7 +221,11 @@ def generate_kertz_excel(year: int, month: int):
         cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 
     prefix = f"{year:04d}-{month:02d}"
+    
+    # 核心升級：在這裡加入自動排序 (Auto-Sort)，確保匯出的 Excel A4 表格永遠照 1~31 號順序排好！
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
+    m_logs = sorted(m_logs, key=lambda x: str(x.get("日期", "")))
+    
     f_map = {str(fl["加油日期"]): fl for fl in st.session_state.fuel_logs if str(fl.get("加油日期", "")).startswith(prefix)}
 
     start_row = 5
@@ -288,7 +302,8 @@ tab_daily, tab_history, tab_fuel, tab_export = st.tabs(["📝 返廠登記", "�
 with tab_daily:
     st.subheader("每日返廠單次結算")
     with st.form("quick_daily_form"):
-        f_date = st.date_input("日期", datetime.now(TW_TZ))
+        # UI 更新提示：讓使用者知道這裡可以直接點擊補登
+        f_date = st.date_input("日期 (可點擊修改補登)", datetime.now(TW_TZ))
         f_user = st.text_input("使用人", value=DEFAULT_USER)
         f_dest_select = st.selectbox("目的地 (點選快捷)", st.session_state.destinations)
         f_dest_custom = st.text_input("或輸入新目的地 (選填)")
@@ -296,7 +311,7 @@ with tab_daily:
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             f_start_time = st.text_input("出發時間", value="07:20")
-            f_start_mil = st.number_input("出發里程 (鎖定前次)", value=latest_return_mileage, disabled=True)
+            f_start_mil = st.number_input("出發里程 (預設為系統最新里程)", value=latest_return_mileage, disabled=False) # 開放補登修改
         with col_t2:
             f_ret_time = st.text_input("返廠時間", value=datetime.now(TW_TZ).strftime("%H:%M"))
             def_return = latest_return_mileage + 23 if "順益" in f_dest_select else latest_return_mileage + 170
@@ -310,66 +325,67 @@ with tab_daily:
                 f_start_time, int(f_start_mil), f_ret_time, int(f_ret_mil), ""
             ]
             ws_daily.append_row(new_row)
-            st.success("✅ 雲端同步成功！")
+            st.success(f"✅ {f_date.strftime('%m/%d')} 的紀錄已寫入 Google Sheets！")
             st.rerun()
 
-# =============== 全新手機版原生修改介面 ===============
 with tab_history:
-    st.subheader("📱 手機專用歷史修改")
-    st.caption("從下拉選單選擇想要修改的紀錄，像填表單一樣輕鬆更改！")
+    st.subheader("📱 雙層過濾：手機專用歷史修改")
+    st.caption("先選月份，再選日期，就算用十年也瞬間找到資料！(補登資料會自動排序)")
     
-    # 準備選單資料 (反轉陣列，讓最新的紀錄在最上面)
-    log_options = []
-    for idx, log in enumerate(st.session_state.daily_logs):
-        # 雲端試算表實際所在的列數 (row 1 是標題，所以 idx 要加 2)
-        sheet_row_num = idx + 2 
-        label = f"[{log.get('日期')}] {log.get('目的地')} (返廠: {log.get('返廠里程')})"
-        log_options.append((sheet_row_num, label, log))
-        
-    log_options.reverse()
-    
-    if not log_options:
+    if not st.session_state.daily_logs:
         st.info("目前沒有歷史資料可修改")
     else:
-        # 只取前 30 筆供修改，避免選單太長卡頓
-        recent_options = log_options[:30]
-        option_labels = [item[1] for item in recent_options]
+        all_months = sorted(list(set([str(log.get('日期', ''))[:7] for log in st.session_state.daily_logs if log.get('日期')])), reverse=True)
+        selected_month = st.selectbox("📅 第一步：選擇月份", all_months)
         
-        selected_label = st.selectbox("請選擇要修改的歷史紀錄：", option_labels)
-        
-        # 抓出選中的那筆資料
-        selected_item = next(item for item in recent_options if item[1] == selected_label)
-        target_row_num, _, target_log = selected_item
-        
-        with st.form("mobile_edit_form"):
-            e_date = st.text_input("日期 (YYYY-MM-DD)", value=str(target_log.get("日期")))
-            e_user = st.text_input("使用人", value=str(target_log.get("使用人")))
-            e_dest = st.text_input("目的地", value=str(target_log.get("目的地")))
-            
-            c_e1, c_e2 = st.columns(2)
-            with c_e1:
-                e_st_time = st.text_input("出發時間", value=str(target_log.get("出發時間")))
-                e_st_mil = st.number_input("出發里程", value=int(target_log.get("出發里程", 0)), step=1)
-            with c_e2:
-                e_ret_time = st.text_input("返廠時間", value=str(target_log.get("返廠時間")))
-                e_ret_mil = st.number_input("返廠里程", value=int(target_log.get("返廠里程", 0)), step=1)
-            
-            c_btn1, c_btn2 = st.columns(2)
-            with c_btn1:
-                btn_save_edit = st.form_submit_button("💾 儲存修改", use_container_width=True)
-            with c_btn2:
-                btn_delete = st.form_submit_button("🗑️ 刪除紀錄", use_container_width=True)
-            
-            if btn_save_edit:
-                updated_row = [e_date, e_user, e_dest, e_st_time, int(e_st_mil), e_ret_time, int(e_ret_mil), str(target_log.get("備註", ""))]
-                ws_daily.update(values=[updated_row], range_name=f"A{target_row_num}:H{target_row_num}")
-                st.success(f"✅ 資料已更新至雲端！")
-                st.rerun()
+        log_options = []
+        for idx, log in enumerate(st.session_state.daily_logs):
+            sheet_row_num = idx + 2 # 記住雲端試算表的真實列號，刪改才不會出錯
+            if str(log.get('日期', '')).startswith(selected_month):
+                label = f"[{log.get('日期')}] {log.get('目的地')} (返廠: {log.get('返廠里程')})"
+                log_options.append((sheet_row_num, label, log))
                 
-            if btn_delete:
-                ws_daily.delete_rows(target_row_num)
-                st.warning(f"🗑️ 該筆紀錄已徹底刪除！")
-                st.rerun()
+        # 核心升級：就算 Google Sheet 裡面的順序因為補登而亂掉，顯示給你看的選單一定會重新排整齊！
+        log_options = sorted(log_options, key=lambda x: str(x[2].get('日期', '')), reverse=True)
+        
+        if not log_options:
+            st.warning("該月份無紀錄")
+        else:
+            option_labels = [item[1] for item in log_options]
+            selected_label = st.selectbox("✏️ 第二步：選擇要修改的紀錄", option_labels)
+            
+            selected_item = next(item for item in log_options if item[1] == selected_label)
+            target_row_num, _, target_log = selected_item
+            
+            with st.form("mobile_edit_form"):
+                e_date = st.text_input("日期 (YYYY-MM-DD)", value=str(target_log.get("日期")))
+                e_user = st.text_input("使用人", value=str(target_log.get("使用人")))
+                e_dest = st.text_input("目的地", value=str(target_log.get("目的地")))
+                
+                c_e1, c_e2 = st.columns(2)
+                with c_e1:
+                    e_st_time = st.text_input("出發時間", value=str(target_log.get("出發時間")))
+                    e_st_mil = st.number_input("出發里程", value=int(target_log.get("出發里程", 0)), step=1)
+                with c_e2:
+                    e_ret_time = st.text_input("返廠時間", value=str(target_log.get("返廠時間")))
+                    e_ret_mil = st.number_input("返廠里程", value=int(target_log.get("返廠里程", 0)), step=1)
+                
+                c_btn1, c_btn2 = st.columns(2)
+                with c_btn1:
+                    btn_save_edit = st.form_submit_button("💾 儲存修改", use_container_width=True)
+                with c_btn2:
+                    btn_delete = st.form_submit_button("🗑️ 刪除紀錄", use_container_width=True)
+                
+                if btn_save_edit:
+                    updated_row = [e_date, e_user, e_dest, e_st_time, int(e_st_mil), e_ret_time, int(e_ret_mil), str(target_log.get("備註", ""))]
+                    ws_daily.update(values=[updated_row], range_name=f"A{target_row_num}:H{target_row_num}")
+                    st.success(f"✅ 資料已完美更新至雲端！")
+                    st.rerun()
+                    
+                if btn_delete:
+                    ws_daily.delete_rows(target_row_num)
+                    st.warning(f"🗑️ 該筆紀錄已徹底刪除！")
+                    st.rerun()
 
 with tab_fuel:
     c_f1, c_f2 = st.columns(2)
