@@ -75,7 +75,7 @@ latest_return_mileage = int(latest_log["返廠里程"])
 latest_fuel_log = st.session_state.fuel_logs[-1]
 latest_fuel_mileage = int(latest_fuel_log["加油里程"])
 
-# ================= 動態保養預測邏輯 (嚴格防錯) =================
+# ================= 動態保養預測邏輯 =================
 def calculate_service_prediction(logs, current_mileage, target_mileage):
     if len(logs) < 2: return "資料不足"
     recent_logs = logs[-7:] if len(logs) >= 7 else logs
@@ -97,7 +97,7 @@ def calculate_service_prediction(logs, current_mileage, target_mileage):
 
 est_service_date = calculate_service_prediction(st.session_state.daily_logs, latest_return_mileage, SERVICE_TARGET)
 
-# ================= 動態尿素預測邏輯 (嚴格防錯) =================
+# ================= 動態尿素預測邏輯 =================
 def calculate_urea_prediction(urea_logs, logs):
     if len(urea_logs) < 1 or len(logs) < 2: return "資料不足"
     try:
@@ -109,13 +109,11 @@ def calculate_urea_prediction(urea_logs, logs):
         mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
         avg_daily_km = mileage_diff / days_diff
         if avg_daily_km <= 0: return "里程未增加"
-
         last_urea = urea_logs[-1]
         liters = float(last_urea.get("公升數", 20))
         km_per_liter = 50 
         total_range_km = liters * km_per_liter
         days_remaining = int(total_range_km / avg_daily_km)
-        
         est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
         return est_date.strftime("%m月%d日")
     except:
@@ -188,7 +186,6 @@ def generate_kertz_excel(year: int, month: int):
     ws["A3"] = "行車\n日誌"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_center
-
     ws.merge_cells("B3:C3")
     ws["B3"] = f"月份： {roc_year} 年 {month} 月"
     ws["B3"].font = font_bold_md
@@ -254,7 +251,6 @@ def generate_kertz_excel(year: int, month: int):
     ws.page_setup.fitToWidth = 1
     ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
-
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -263,8 +259,6 @@ def generate_kertz_excel(year: int, month: int):
 # ================= 前端介面 =================
 st.set_page_config(page_title="380-S2 車隊管理", layout="centered")
 
-# ================= UI 優化排版區 =================
-# 將標題字體調整至28px並加入底部邊距，確保單行顯示
 st.markdown("""
 <style>
     .main-title {
@@ -278,21 +272,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
-# ================= 核心儀表板區 =================
 c_dash1, c_dash2 = st.columns(2)
 with c_dash1:
     st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
 with c_dash2:
     st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta=f"尿素預估用完：{est_urea_date}", delta_color="off")
 
-# ================= 加油建議提示區 =================
 if fuel_level == "success": st.success(f"**{fuel_status}**\n\n{fuel_tip}")
 elif fuel_level == "warning": st.warning(f"**{fuel_status}**\n\n{fuel_tip}")
 elif fuel_level == "info": st.info(f"**{fuel_status}**\n\n{fuel_tip}")
 else: st.error(f"**{fuel_status}**\n\n{fuel_tip}")
 
-# ================= 功能頁籤 =================
-tab_daily, tab_history, tab_fuel, tab_export = st.tabs(["📝 返廠登記", "📋 歷史與修改", "⛽ 油/尿素", "🖨️ A4 匯出"])
+tab_daily, tab_history, tab_fuel, tab_export = st.tabs(["📝 返廠登記", "📋 歷史修改", "⛽ 油/尿素", "🖨️ A4 匯出"])
 
 with tab_daily:
     st.subheader("每日返廠單次結算")
@@ -312,7 +303,6 @@ with tab_daily:
             f_ret_mil = st.number_input("返廠里程 (請看儀表板輸入)", value=def_return, step=1)
 
         submit_daily = st.form_submit_button("💾 儲存今日紀錄，同步至雲端", use_container_width=True)
-
         if submit_daily:
             dest_final = f_dest_custom.strip() if f_dest_custom.strip() else f_dest_select
             new_row = [
@@ -320,23 +310,66 @@ with tab_daily:
                 f_start_time, int(f_start_mil), f_ret_time, int(f_ret_mil), ""
             ]
             ws_daily.append_row(new_row)
-            st.success("✅ 雲端同步成功！資料已寫入 Google Sheets。")
+            st.success("✅ 雲端同步成功！")
             st.rerun()
 
+# =============== 全新手機版原生修改介面 ===============
 with tab_history:
-    st.subheader("📋 歷史紀錄與雲端修改")
-    st.caption("在下方表格「點擊兩下」即可修改數字或文字，也可選取整列刪除。修改完畢後請務必按下方的【儲存】同步至雲端。")
+    st.subheader("📱 手機專用歷史修改")
+    st.caption("從下拉選單選擇想要修改的紀錄，像填表單一樣輕鬆更改！")
     
-    df_daily = pd.DataFrame(st.session_state.daily_logs)
-    edited_df = st.data_editor(df_daily, num_rows="dynamic", use_container_width=True)
+    # 準備選單資料 (反轉陣列，讓最新的紀錄在最上面)
+    log_options = []
+    for idx, log in enumerate(st.session_state.daily_logs):
+        # 雲端試算表實際所在的列數 (row 1 是標題，所以 idx 要加 2)
+        sheet_row_num = idx + 2 
+        label = f"[{log.get('日期')}] {log.get('目的地')} (返廠: {log.get('返廠里程')})"
+        log_options.append((sheet_row_num, label, log))
+        
+    log_options.reverse()
     
-    if st.button("💾 將修改同步覆蓋至 Google 試算表", use_container_width=True):
-        new_data = edited_df.fillna("").values.tolist()
-        header = edited_df.columns.tolist()
-        ws_daily.clear()
-        ws_daily.append_rows([header] + new_data)
-        st.success("✅ 修改已成功同步至雲端！")
-        st.rerun()
+    if not log_options:
+        st.info("目前沒有歷史資料可修改")
+    else:
+        # 只取前 30 筆供修改，避免選單太長卡頓
+        recent_options = log_options[:30]
+        option_labels = [item[1] for item in recent_options]
+        
+        selected_label = st.selectbox("請選擇要修改的歷史紀錄：", option_labels)
+        
+        # 抓出選中的那筆資料
+        selected_item = next(item for item in recent_options if item[1] == selected_label)
+        target_row_num, _, target_log = selected_item
+        
+        with st.form("mobile_edit_form"):
+            e_date = st.text_input("日期 (YYYY-MM-DD)", value=str(target_log.get("日期")))
+            e_user = st.text_input("使用人", value=str(target_log.get("使用人")))
+            e_dest = st.text_input("目的地", value=str(target_log.get("目的地")))
+            
+            c_e1, c_e2 = st.columns(2)
+            with c_e1:
+                e_st_time = st.text_input("出發時間", value=str(target_log.get("出發時間")))
+                e_st_mil = st.number_input("出發里程", value=int(target_log.get("出發里程", 0)), step=1)
+            with c_e2:
+                e_ret_time = st.text_input("返廠時間", value=str(target_log.get("返廠時間")))
+                e_ret_mil = st.number_input("返廠里程", value=int(target_log.get("返廠里程", 0)), step=1)
+            
+            c_btn1, c_btn2 = st.columns(2)
+            with c_btn1:
+                btn_save_edit = st.form_submit_button("💾 儲存修改", use_container_width=True)
+            with c_btn2:
+                btn_delete = st.form_submit_button("🗑️ 刪除紀錄", use_container_width=True)
+            
+            if btn_save_edit:
+                updated_row = [e_date, e_user, e_dest, e_st_time, int(e_st_mil), e_ret_time, int(e_ret_mil), str(target_log.get("備註", ""))]
+                ws_daily.update(values=[updated_row], range_name=f"A{target_row_num}:H{target_row_num}")
+                st.success(f"✅ 資料已更新至雲端！")
+                st.rerun()
+                
+            if btn_delete:
+                ws_daily.delete_rows(target_row_num)
+                st.warning(f"🗑️ 該筆紀錄已徹底刪除！")
+                st.rerun()
 
 with tab_fuel:
     c_f1, c_f2 = st.columns(2)
@@ -349,7 +382,6 @@ with tab_fuel:
             fuel_cost = st.number_input("實付費用 (元)", value=4500, step=10)
             fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"])
             sub_fuel = st.form_submit_button("紀錄柴油並同步", use_container_width=True)
-
             if sub_fuel:
                 new_fuel_row = [
                     fuel_d.strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"),
@@ -365,7 +397,6 @@ with tab_fuel:
             urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
             urea_cost = st.number_input("實付費用 (元)", value=500, step=10)
             sub_urea = st.form_submit_button("紀錄尿素並同步", use_container_width=True)
-
             if sub_urea:
                 new_urea_row = [
                     datetime.now(TW_TZ).strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"),
