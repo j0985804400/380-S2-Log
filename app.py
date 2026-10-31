@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 import io
 import openpyxl
@@ -8,7 +9,6 @@ import pandas as pd
 import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import json
 
 # ================= 系統固定參數 =================
 DEFAULT_PLATE = "380-S2"
@@ -19,19 +19,23 @@ FORM_NAME = "公務車輛行車紀錄表 Rev.1"
 SERVICE_TARGET = 622000  
 SERVICE_INTERVAL = 10000 
 
-
 # ================= Google Sheets 雲端連線設定 =================
 @st.cache_resource
 def get_gsheets_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    try:
-        # 雲端版寫法：從 Streamlit 的安全保險箱讀取金鑰
+    # 自動判斷：如果在雲端就抓 Secrets 保險箱，在電腦就抓 credentials.json
+    if "google_key" in st.secrets:
         creds_dict = json.loads(st.secrets["google_key"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    except:
-        # 本地端寫法：在自己電腦上測試時，讀取旁邊的 json 檔
+    else:
         creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
     return gspread.authorize(creds)
+
+client = get_gsheets_client()
+sh = client.open("380-S2_公務車行車紀錄系統")
+ws_daily = sh.worksheet("Daily_Logs")
+ws_fuel = sh.worksheet("Fuel_Logs")
+ws_urea = sh.worksheet("Urea_Logs")
 
 # ================= 資料同步與快取 =================
 def load_data():
@@ -67,9 +71,7 @@ def calculate_service_prediction(logs, current_mileage, target_mileage):
     if len(logs) < 2:
         return "資料不足，無法預測"
     
-    # 抓取最近 7 筆紀錄來計算平均日里程
     recent_logs = logs[-7:] if len(logs) >= 7 else logs
-    
     try:
         first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
         last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
@@ -79,7 +81,7 @@ def calculate_service_prediction(logs, current_mileage, target_mileage):
             return "需更多天數資料"
             
         mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
-        avg_daily_km = mileage_diff / max(days_diff, 1) # 避免除以 0
+        avg_daily_km = mileage_diff / max(days_diff, 1) 
         
         if avg_daily_km <= 0:
             return "里程未增加"
@@ -95,7 +97,6 @@ def calculate_service_prediction(logs, current_mileage, target_mileage):
         return "計算中..."
 
 est_service_date = calculate_service_prediction(st.session_state.daily_logs, latest_return_mileage, SERVICE_TARGET)
-
 
 # ================= 智慧加油均算邏輯 =================
 driven_since_fuel = latest_return_mileage - latest_fuel_mileage
