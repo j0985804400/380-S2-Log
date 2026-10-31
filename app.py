@@ -263,8 +263,8 @@ def generate_kertz_excel(year: int, month: int):
 # ================= 前端介面 =================
 st.set_page_config(page_title="380-S2 車隊管理", page_icon="🚛", layout="centered")
 
-# 使用 CSS 確保標題絕對不會在手機版自動斷行
-st.markdown("<h2 style='font-size: 22px; font-weight: bold; margin-bottom: 0px; white-space: nowrap;'>380-S2 車隊管理</h2>", unsafe_allow_html=True)
+# 將標題字體加大到 28px，並設定 white-space: nowrap 確保在手機螢幕不自動斷行
+st.markdown("<h2 style='font-size: 28px; font-weight: bold; margin-bottom: 0px; white-space: nowrap;'>380-S2 車隊管理</h2>", unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
 c_dash1, c_dash2 = st.columns(2)
