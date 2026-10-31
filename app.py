@@ -261,23 +261,37 @@ def generate_kertz_excel(year: int, month: int):
     return buf
 
 # ================= 前端介面 =================
-st.set_page_config(page_title="380-S2 車隊管理", page_icon="🚛", layout="centered")
+st.set_page_config(page_title="380-S2 車隊管理", layout="centered")
 
-# 將標題字體加大到 28px，並設定 white-space: nowrap 確保在手機螢幕不自動斷行
-st.markdown("<h2 style='font-size: 28px; font-weight: bold; margin-bottom: 0px; white-space: nowrap;'>380-S2 車隊管理</h2>", unsafe_allow_html=True)
+# ================= UI 優化排版區 =================
+# 將標題字體調整至28px並加入底部邊距，確保單行顯示
+st.markdown("""
+<style>
+    .main-title {
+        font-size: 28px !important;
+        font-weight: 800;
+        margin-bottom: 5px;
+        white-space: nowrap;
+    }
+</style>
+<div class='main-title'>380-S2 車隊管理</div>
+""", unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
+# ================= 核心儀表板區 =================
 c_dash1, c_dash2 = st.columns(2)
 with c_dash1:
     st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
 with c_dash2:
     st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta=f"尿素預估用完：{est_urea_date}", delta_color="off")
 
+# ================= 加油建議提示區 =================
 if fuel_level == "success": st.success(f"**{fuel_status}**\n\n{fuel_tip}")
 elif fuel_level == "warning": st.warning(f"**{fuel_status}**\n\n{fuel_tip}")
 elif fuel_level == "info": st.info(f"**{fuel_status}**\n\n{fuel_tip}")
 else: st.error(f"**{fuel_status}**\n\n{fuel_tip}")
 
+# ================= 功能頁籤 =================
 tab_daily, tab_history, tab_fuel, tab_export = st.tabs(["📝 返廠登記", "📋 歷史與修改", "⛽ 油/尿素", "🖨️ A4 匯出"])
 
 with tab_daily:
@@ -286,7 +300,7 @@ with tab_daily:
         f_date = st.date_input("日期", datetime.now(TW_TZ))
         f_user = st.text_input("使用人", value=DEFAULT_USER)
         f_dest_select = st.selectbox("目的地 (點選快捷)", st.session_state.destinations)
-        f_dest_custom = st.text_input("或輸入新目的地")
+        f_dest_custom = st.text_input("或輸入新目的地 (選填)")
 
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -311,7 +325,7 @@ with tab_daily:
 
 with tab_history:
     st.subheader("📋 歷史紀錄與雲端修改")
-    st.caption("直接在下方表格「點擊兩下」即可修改打錯的數字或文字，也可選取整列刪除。修改完畢後請務必按下方的【儲存】同步至雲端。")
+    st.caption("在下方表格「點擊兩下」即可修改數字或文字，也可選取整列刪除。修改完畢後請務必按下方的【儲存】同步至雲端。")
     
     df_daily = pd.DataFrame(st.session_state.daily_logs)
     edited_df = st.data_editor(df_daily, num_rows="dynamic", use_container_width=True)
