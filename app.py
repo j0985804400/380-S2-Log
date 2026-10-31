@@ -41,6 +41,7 @@ ws_urea = sh.worksheet("Urea_Logs")
 def load_data():
     daily_data = ws_daily.get_all_records()
     fuel_data = ws_fuel.get_all_records()
+    urea_data = ws_urea.get_all_records()
     
     if not daily_data:
         daily_data = [{
@@ -52,9 +53,14 @@ def load_data():
             "加油日期": "2026-10-30", "加油時間": "18:40", "加油里程": 614997,
             "公升數": 130.0, "加油費用": 3816, "加油站名": "中油苗栗站"
         }]
+    if not urea_data:
+        urea_data = [{
+            "添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加"
+        }]
         
     st.session_state.daily_logs = daily_data
     st.session_state.fuel_logs = fuel_data
+    st.session_state.urea_logs = urea_data
     if "destinations" not in st.session_state:
         st.session_state.destinations = ["美光", "順益", "廠內調度"]
 
@@ -86,6 +92,36 @@ def calculate_service_prediction(logs, current_mileage, target_mileage):
         return "計算中..."
 
 est_service_date = calculate_service_prediction(st.session_state.daily_logs, latest_return_mileage, SERVICE_TARGET)
+
+# ================= 動態尿素預測邏輯 =================
+def calculate_urea_prediction(urea_logs, logs):
+    if len(urea_logs) < 1 or len(logs) < 2: return "資料不足"
+    try:
+        # 計算平均每天跑多少公里
+        recent_logs = logs[-7:] if len(logs) >= 7 else logs
+        first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
+        last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
+        days_diff = (last_date - first_date).days
+        if days_diff == 0: return "需更多天數"
+        mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
+        avg_daily_km = mileage_diff / max(days_diff, 1)
+        if avg_daily_km <= 0: return "里程未增加"
+
+        # 假設大型商用車大約每 100 公里消耗 1.5 ~ 2 公升尿素（以 20L 桶裝大約可跑 1000~1200 公里估算，或依實際記錄）
+        # 這裡以最近一次添加的公升數來推算還能跑幾天
+        last_urea = urea_logs[-1]
+        liters = float(last_urea.get("公升數", 20))
+        # 經驗值：1公升尿素約可跑 50 公里
+        km_per_liter = 50 
+        total_range_km = liters * km_per_liter
+        days_remaining = int(total_range_km / avg_daily_km)
+        
+        est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
+        return est_date.strftime("%m月%d日")
+    except:
+        return "計算中..."
+
+est_urea_date = calculate_urea_prediction(st.session_state.urea_logs, st.session_state.daily_logs)
 
 # ================= 智慧加油均算邏輯 =================
 driven_since_fuel = latest_return_mileage - latest_fuel_mileage
@@ -227,15 +263,14 @@ def generate_kertz_excel(year: int, month: int):
 # ================= 前端介面 =================
 st.set_page_config(page_title="380-S2 智慧行車日誌", page_icon="🚛", layout="centered")
 
-# 這裡把大標題簡化，避免手機螢幕太窄擠成兩行不好看
-st.title("🚛 行車日誌管理系統")
-st.caption("連線狀態：🟢 Google Sheets 雲端連線成功 ｜ 車牌：380-S2")
+st.title("🚛 380-S2 車隊管理")
+st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
 c_dash1, c_dash2 = st.columns(2)
 with c_dash1:
     st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
 with c_dash2:
-    st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta="目標線 500 km", delta_color="off")
+    st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta=f"尿素預估用完：{est_urea_date}", delta_color="off")
 
 if fuel_level == "success": st.success(f"**{fuel_status}**\n\n{fuel_tip}")
 elif fuel_level == "warning": st.warning(f"**{fuel_status}**\n\n{fuel_tip}")
