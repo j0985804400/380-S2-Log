@@ -149,9 +149,12 @@ def generate_kertz_excel(year: int, month: int):
 
     roc_year = year - 1911
     ws.row_dimensions[3].height = 24
+    
+    # 修正：加上換行符號 \n，讓「行車」與「日誌」完美上下排列
     ws["A3"] = "行車\n日誌"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_center
+
     ws.merge_cells("B3:C3")
     ws["B3"] = f"月份： {roc_year} 年 {month} 月"
     ws["B3"].font = font_bold_md
@@ -274,19 +277,14 @@ with tab_history:
     st.subheader("📋 歷史紀錄與雲端修改")
     st.caption("直接在下方表格「點擊兩下」即可修改打錯的數字或文字，也可選取整列刪除。修改完畢後請務必按下方的【儲存】同步至雲端。")
     
-    # 將快取資料轉為 DataFrame 並開啟編輯器
     df_daily = pd.DataFrame(st.session_state.daily_logs)
     edited_df = st.data_editor(df_daily, num_rows="dynamic", use_container_width=True)
     
     if st.button("💾 將修改同步覆蓋至 Google 試算表", use_container_width=True):
-        # 轉換回 list 準備上傳
         new_data = edited_df.fillna("").values.tolist()
         header = edited_df.columns.tolist()
-        
-        # 覆蓋雲端試算表
         ws_daily.clear()
         ws_daily.append_rows([header] + new_data)
-        
         st.success("✅ 修改已成功同步至雲端！")
         st.rerun()
 
