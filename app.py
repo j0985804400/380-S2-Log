@@ -39,10 +39,14 @@ ws_urea = sh.worksheet("Urea_Logs")
 
 # ================= 資料同步與快取 =================
 def load_data():
-    daily_data = ws_daily.get_all_records()
-    fuel_data = ws_fuel.get_all_records()
-    urea_data = ws_urea.get_all_records()
-    
+    try:
+        daily_data = ws_daily.get_all_records()
+        fuel_data = ws_fuel.get_all_records()
+        urea_data = ws_urea.get_all_records()
+    except Exception as e:
+        st.error(f"雲端資料讀取失敗: {e}")
+        return
+
     if not daily_data:
         daily_data = [{
             "日期": "2026-10-31", "使用人": "劉嘉舜", "目的地": "美光",
@@ -71,47 +75,43 @@ latest_return_mileage = int(latest_log["返廠里程"])
 latest_fuel_log = st.session_state.fuel_logs[-1]
 latest_fuel_mileage = int(latest_fuel_log["加油里程"])
 
-# ================= 動態保養預測邏輯 =================
+# ================= 動態保養預測邏輯 (嚴格防錯) =================
 def calculate_service_prediction(logs, current_mileage, target_mileage):
-    if len(logs) < 2: return "資料不足，無法預測"
+    if len(logs) < 2: return "資料不足"
     recent_logs = logs[-7:] if len(logs) >= 7 else logs
     try:
         first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
         last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
         days_diff = (last_date - first_date).days
-        if days_diff == 0: return "需更多天數資料"
+        if days_diff <= 0: return "需更多天數"
         mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
-        avg_daily_km = mileage_diff / max(days_diff, 1) 
+        avg_daily_km = mileage_diff / days_diff
         if avg_daily_km <= 0: return "里程未增加"
         km_remaining = target_mileage - current_mileage
-        if km_remaining <= 0: return "已達保養里程！"
+        if km_remaining <= 0: return "已達保養里程"
         days_remaining = int(km_remaining / avg_daily_km)
         est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
         return est_date.strftime("%m月%d日")
     except:
-        return "計算中..."
+        return "計算中"
 
 est_service_date = calculate_service_prediction(st.session_state.daily_logs, latest_return_mileage, SERVICE_TARGET)
 
-# ================= 動態尿素預測邏輯 =================
+# ================= 動態尿素預測邏輯 (嚴格防錯) =================
 def calculate_urea_prediction(urea_logs, logs):
     if len(urea_logs) < 1 or len(logs) < 2: return "資料不足"
     try:
-        # 計算平均每天跑多少公里
         recent_logs = logs[-7:] if len(logs) >= 7 else logs
         first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
         last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
         days_diff = (last_date - first_date).days
-        if days_diff == 0: return "需更多天數"
+        if days_diff <= 0: return "需更多天數"
         mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
-        avg_daily_km = mileage_diff / max(days_diff, 1)
+        avg_daily_km = mileage_diff / days_diff
         if avg_daily_km <= 0: return "里程未增加"
 
-        # 假設大型商用車大約每 100 公里消耗 1.5 ~ 2 公升尿素（以 20L 桶裝大約可跑 1000~1200 公里估算，或依實際記錄）
-        # 這裡以最近一次添加的公升數來推算還能跑幾天
         last_urea = urea_logs[-1]
         liters = float(last_urea.get("公升數", 20))
-        # 經驗值：1公升尿素約可跑 50 公里
         km_per_liter = 50 
         total_range_km = liters * km_per_liter
         days_remaining = int(total_range_km / avg_daily_km)
@@ -119,7 +119,7 @@ def calculate_urea_prediction(urea_logs, logs):
         est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
         return est_date.strftime("%m月%d日")
     except:
-        return "計算中..."
+        return "計算中"
 
 est_urea_date = calculate_urea_prediction(st.session_state.urea_logs, st.session_state.daily_logs)
 
@@ -261,9 +261,10 @@ def generate_kertz_excel(year: int, month: int):
     return buf
 
 # ================= 前端介面 =================
-st.set_page_config(page_title="380-S2 智慧行車日誌", page_icon="🚛", layout="centered")
+st.set_page_config(page_title="380-S2 車隊管理", page_icon="🚛", layout="centered")
 
-st.title("🚛 380-S2 車隊管理")
+# 使用 CSS 確保標題絕對不會在手機版自動斷行
+st.markdown("<h2 style='font-size: 22px; font-weight: bold; margin-bottom: 0px; white-space: nowrap;'>380-S2 車隊管理</h2>", unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
 c_dash1, c_dash2 = st.columns(2)
