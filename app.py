@@ -18,8 +18,6 @@ DOC_CODE = "4-33-DC0007B"
 FORM_NAME = "公務車輛行車紀錄表 Rev.1"
 SERVICE_TARGET = 622000  
 SERVICE_INTERVAL = 10000 
-
-# 設定台灣時區 (UTC+8)
 TW_TZ = timezone(timedelta(hours=8))
 
 # ================= Google Sheets 雲端連線設定 =================
@@ -62,7 +60,6 @@ def load_data():
 
 load_data()
 
-# 取得最新車況數值
 latest_log = st.session_state.daily_logs[-1]
 latest_return_mileage = int(latest_log["返廠里程"])
 latest_fuel_log = st.session_state.fuel_logs[-1]
@@ -70,28 +67,18 @@ latest_fuel_mileage = int(latest_fuel_log["加油里程"])
 
 # ================= 動態保養預測邏輯 =================
 def calculate_service_prediction(logs, current_mileage, target_mileage):
-    if len(logs) < 2:
-        return "資料不足，無法預測"
-    
+    if len(logs) < 2: return "資料不足，無法預測"
     recent_logs = logs[-7:] if len(logs) >= 7 else logs
     try:
         first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
         last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
         days_diff = (last_date - first_date).days
-        
-        if days_diff == 0:
-            return "需更多天數資料"
-            
+        if days_diff == 0: return "需更多天數資料"
         mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
         avg_daily_km = mileage_diff / max(days_diff, 1) 
-        
-        if avg_daily_km <= 0:
-            return "里程未增加"
-            
+        if avg_daily_km <= 0: return "里程未增加"
         km_remaining = target_mileage - current_mileage
-        if km_remaining <= 0:
-            return "已達保養里程！"
-            
+        if km_remaining <= 0: return "已達保養里程！"
         days_remaining = int(km_remaining / avg_daily_km)
         est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
         return est_date.strftime("%m月%d日")
@@ -102,16 +89,11 @@ est_service_date = calculate_service_prediction(st.session_state.daily_logs, lat
 
 # ================= 智慧加油均算邏輯 =================
 driven_since_fuel = latest_return_mileage - latest_fuel_mileage
-
 def get_fuel_recommendation(delta_km):
-    if delta_km < 340:
-        return ("🟢 油量充裕（今日免加油）", f"距上次加油已跑 {delta_km} km，油箱尚有餘裕，跑完今日行程完全沒問題。", "success")
-    elif 340 <= delta_km < 420:
-        return ("🟡 建議今日【南下】在中油苗栗站加油", f"已跑 {delta_km} km。去程順下苗栗站加滿最穩當，避免回程塞車逼近警戒線。", "warning")
-    elif 420 <= delta_km < 480:
-        return ("🔵 建議今日【北上】回程在中油苗栗站加油", f"已跑 {delta_km} km。足夠跑到后里美光，回程北上剛好湊滿約 500 km 進站加滿，節奏最佳。", "info")
-    else:
-        return ("🔴 油量警戒：今日【南下】必須立刻加油", f"已跑 {delta_km} km，已達進站極限，去程請務必在中油苗栗站補油！", "error")
+    if delta_km < 340: return ("🟢 油量充裕（今日免加油）", f"距上次加油已跑 {delta_km} km，油箱尚有餘裕，跑完今日行程完全沒問題。", "success")
+    elif 340 <= delta_km < 420: return ("🟡 建議今日【南下】在中油苗栗站加油", f"已跑 {delta_km} km。去程順下苗栗站加滿最穩當，避免回程塞車逼近警戒線。", "warning")
+    elif 420 <= delta_km < 480: return ("🔵 建議今日【北上】回程在中油苗栗站加油", f"已跑 {delta_km} km。足夠跑到后里美光，回程北上剛好湊滿約 500 km 進站加滿，節奏最佳。", "info")
+    else: return ("🔴 油量警戒：今日【南下】必須立刻加油", f"已跑 {delta_km} km，已達進站極限，去程請務必在中油苗栗站補油！", "error")
 
 fuel_status, fuel_tip, fuel_level = get_fuel_recommendation(driven_since_fuel)
 rem_service = SERVICE_TARGET - latest_return_mileage
@@ -122,9 +104,7 @@ def generate_kertz_excel(year: int, month: int):
     ws = wb.active
     ws.title = f"{month}月行車紀錄"
     ws.views.sheetView[0].showGridLines = True
-
     font_family = "Microsoft JhengHei"
-    font_bold_lg = Font(name=font_family, size=13, bold=True)
     font_bold_md = Font(name=font_family, size=10, bold=True)
     font_regular = Font(name=font_family, size=9.5)
     font_header_sub = Font(name=font_family, size=8.5)
@@ -165,32 +145,27 @@ def generate_kertz_excel(year: int, month: int):
     ws["H2"].alignment = align_left
 
     for r in range(1, 3):
-        for c in range(1, 10):
-            ws.cell(row=r, column=c).border = border_all
+        for c in range(1, 10): ws.cell(row=r, column=c).border = border_all
 
     roc_year = year - 1911
     ws.row_dimensions[3].height = 24
     ws["A3"] = "行車\n日誌"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_center
-
     ws.merge_cells("B3:C3")
     ws["B3"] = f"月份： {roc_year} 年 {month} 月"
     ws["B3"].font = font_bold_md
     ws["B3"].alignment = align_center
-
     ws.merge_cells("D3:E3")
     ws["D3"] = f"車牌號碼： {DEFAULT_PLATE}"
     ws["D3"].font = font_bold_md
     ws["D3"].alignment = align_center
-
     ws.merge_cells("F3:I3")
     ws["F3"] = f"保管人： {DEFAULT_KEEPER}"
     ws["F3"].font = font_bold_md
     ws["F3"].alignment = align_center
 
-    for c in range(1, 10):
-        ws.cell(row=3, column=c).border = border_all
+    for c in range(1, 10): ws.cell(row=3, column=c).border = border_all
 
     headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
     ws.row_dimensions[4].height = 26
@@ -206,12 +181,9 @@ def generate_kertz_excel(year: int, month: int):
     f_map = {str(fl["加油日期"]): fl for fl in st.session_state.fuel_logs if str(fl.get("加油日期", "")).startswith(prefix)}
 
     start_row = 5
-    total_template_rows = 31
-
-    for i in range(total_template_rows):
+    for i in range(31):
         curr_row = start_row + i
         ws.row_dimensions[curr_row].height = 20
-
         if i < len(m_logs):
             log = m_logs[i]
             day_num = int(log["日期"].split("-")[2])
@@ -222,14 +194,12 @@ def generate_kertz_excel(year: int, month: int):
             ws.cell(row=curr_row, column=5, value=log["出發里程"]).alignment = align_right
             ws.cell(row=curr_row, column=6, value=log["返廠時間"]).alignment = align_center
             ws.cell(row=curr_row, column=7, value=log["返廠里程"]).alignment = align_right
-
             if log["日期"] in f_map:
                 fl = f_map[log["日期"]]
                 ws.cell(row=curr_row, column=8, value=fl["加油里程"]).alignment = align_right
                 ws.cell(row=curr_row, column=9, value=fl["加油費用"]).alignment = align_right
         else:
-            for c in range(1, 10):
-                ws.cell(row=curr_row, column=c, value="")
+            for c in range(1, 10): ws.cell(row=curr_row, column=c, value="")
 
         for c in range(1, 10):
             cell = ws.cell(row=curr_row, column=c)
@@ -239,8 +209,7 @@ def generate_kertz_excel(year: int, month: int):
                 cell.number_format = "#,##0"
 
     col_widths = {"A": 7.5, "B": 9, "C": 10, "D": 10, "E": 12, "F": 10, "G": 12, "H": 12, "I": 11}
-    for col, width in col_widths.items():
-        ws.column_dimensions[col].width = width
+    for col, width in col_widths.items(): ws.column_dimensions[col].width = width
 
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
@@ -270,12 +239,11 @@ elif fuel_level == "warning": st.warning(f"**{fuel_status}**\n\n{fuel_tip}")
 elif fuel_level == "info": st.info(f"**{fuel_status}**\n\n{fuel_tip}")
 else: st.error(f"**{fuel_status}**\n\n{fuel_tip}")
 
-tab_daily, tab_fuel, tab_export = st.tabs(["📝 返廠登記 (5秒完成)", "⛽ 加油 / 尿素獨立記錄", "🖨️ 月底 A4 匯出"])
+tab_daily, tab_history, tab_fuel, tab_export = st.tabs(["📝 返廠登記", "📋 歷史與修改", "⛽ 油/尿素", "🖨️ A4 匯出"])
 
 with tab_daily:
     st.subheader("每日返廠單次結算")
     with st.form("quick_daily_form"):
-        # 強制使用台灣時區取得當前日期
         f_date = st.date_input("日期", datetime.now(TW_TZ))
         f_user = st.text_input("使用人", value=DEFAULT_USER)
         f_dest_select = st.selectbox("目的地 (點選快捷)", st.session_state.destinations)
@@ -284,9 +252,8 @@ with tab_daily:
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             f_start_time = st.text_input("出發時間", value="07:20")
-            f_start_mil = st.number_input("出發里程 (已自動鎖定前次)", value=latest_return_mileage, disabled=True)
+            f_start_mil = st.number_input("出發里程 (鎖定前次)", value=latest_return_mileage, disabled=True)
         with col_t2:
-            # 強制使用台灣時區取得當前時間
             f_ret_time = st.text_input("返廠時間", value=datetime.now(TW_TZ).strftime("%H:%M"))
             def_return = latest_return_mileage + 23 if "順益" in f_dest_select else latest_return_mileage + 170
             f_ret_mil = st.number_input("返廠里程 (請看儀表板輸入)", value=def_return, step=1)
@@ -295,15 +262,33 @@ with tab_daily:
 
         if submit_daily:
             dest_final = f_dest_custom.strip() if f_dest_custom.strip() else f_dest_select
-            
             new_row = [
                 f_date.strftime("%Y-%m-%d"), f_user, dest_final, 
                 f_start_time, int(f_start_mil), f_ret_time, int(f_ret_mil), ""
             ]
             ws_daily.append_row(new_row)
-            
             st.success("✅ 雲端同步成功！資料已寫入 Google Sheets。")
             st.rerun()
+
+with tab_history:
+    st.subheader("📋 歷史紀錄與雲端修改")
+    st.caption("直接在下方表格「點擊兩下」即可修改打錯的數字或文字，也可選取整列刪除。修改完畢後請務必按下方的【儲存】同步至雲端。")
+    
+    # 將快取資料轉為 DataFrame 並開啟編輯器
+    df_daily = pd.DataFrame(st.session_state.daily_logs)
+    edited_df = st.data_editor(df_daily, num_rows="dynamic", use_container_width=True)
+    
+    if st.button("💾 將修改同步覆蓋至 Google 試算表", use_container_width=True):
+        # 轉換回 list 準備上傳
+        new_data = edited_df.fillna("").values.tolist()
+        header = edited_df.columns.tolist()
+        
+        # 覆蓋雲端試算表
+        ws_daily.clear()
+        ws_daily.append_rows([header] + new_data)
+        
+        st.success("✅ 修改已成功同步至雲端！")
+        st.rerun()
 
 with tab_fuel:
     c_f1, c_f2 = st.columns(2)
@@ -346,7 +331,6 @@ with tab_export:
     st.subheader("標準紙本 1:1 還原列印")
     exp_y = st.selectbox("年份", [2026, 2027], index=0)
     exp_m = st.selectbox("月份", list(range(1, 13)), index=datetime.now(TW_TZ).month - 1)
-
     excel_file = generate_kertz_excel(exp_y, exp_m)
 
     st.download_button(
