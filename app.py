@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import io
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -10,7 +10,7 @@ import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-# ================= 系統固定參數 =================
+# ================= 系統固定參數與時區設定 =================
 DEFAULT_PLATE = "380-S2"
 DEFAULT_KEEPER = "劉嘉舜"
 DEFAULT_USER = "劉嘉舜"
@@ -19,11 +19,13 @@ FORM_NAME = "公務車輛行車紀錄表 Rev.1"
 SERVICE_TARGET = 622000  
 SERVICE_INTERVAL = 10000 
 
+# 設定台灣時區 (UTC+8)
+TW_TZ = timezone(timedelta(hours=8))
+
 # ================= Google Sheets 雲端連線設定 =================
 @st.cache_resource
 def get_gsheets_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    # 自動判斷：如果在雲端就抓 Secrets 保險箱，在電腦就抓 credentials.json
     if "google_key" in st.secrets:
         creds_dict = json.loads(st.secrets["google_key"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -91,7 +93,7 @@ def calculate_service_prediction(logs, current_mileage, target_mileage):
             return "已達保養里程！"
             
         days_remaining = int(km_remaining / avg_daily_km)
-        est_date = datetime.now() + timedelta(days=days_remaining)
+        est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
         return est_date.strftime("%m月%d日")
     except:
         return "計算中..."
@@ -273,7 +275,8 @@ tab_daily, tab_fuel, tab_export = st.tabs(["📝 返廠登記 (5秒完成)", "�
 with tab_daily:
     st.subheader("每日返廠單次結算")
     with st.form("quick_daily_form"):
-        f_date = st.date_input("日期", datetime.now())
+        # 強制使用台灣時區取得當前日期
+        f_date = st.date_input("日期", datetime.now(TW_TZ))
         f_user = st.text_input("使用人", value=DEFAULT_USER)
         f_dest_select = st.selectbox("目的地 (點選快捷)", st.session_state.destinations)
         f_dest_custom = st.text_input("或輸入新目的地")
@@ -283,7 +286,8 @@ with tab_daily:
             f_start_time = st.text_input("出發時間", value="07:20")
             f_start_mil = st.number_input("出發里程 (已自動鎖定前次)", value=latest_return_mileage, disabled=True)
         with col_t2:
-            f_ret_time = st.text_input("返廠時間", value=datetime.now().strftime("%H:%M"))
+            # 強制使用台灣時區取得當前時間
+            f_ret_time = st.text_input("返廠時間", value=datetime.now(TW_TZ).strftime("%H:%M"))
             def_return = latest_return_mileage + 23 if "順益" in f_dest_select else latest_return_mileage + 170
             f_ret_mil = st.number_input("返廠里程 (請看儀表板輸入)", value=def_return, step=1)
 
@@ -306,7 +310,7 @@ with tab_fuel:
     with c_f1:
         st.markdown("### ⛽ 柴油加油")
         with st.form("fuel_form"):
-            fuel_d = st.date_input("加油日期", datetime.now(), key="fd")
+            fuel_d = st.date_input("加油日期", datetime.now(TW_TZ), key="fd")
             fuel_m = st.number_input("加油當下里程", value=latest_return_mileage, step=1)
             fuel_l = st.number_input("公升數 (L)", value=150.0, step=0.1)
             fuel_cost = st.number_input("實付費用 (元)", value=4500, step=10)
@@ -315,7 +319,7 @@ with tab_fuel:
 
             if sub_fuel:
                 new_fuel_row = [
-                    fuel_d.strftime("%Y-%m-%d"), datetime.now().strftime("%H:%M"),
+                    fuel_d.strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"),
                     int(fuel_m), float(fuel_l), int(fuel_cost), fuel_station
                 ]
                 ws_fuel.append_row(new_fuel_row)
@@ -331,7 +335,7 @@ with tab_fuel:
 
             if sub_urea:
                 new_urea_row = [
-                    datetime.now().strftime("%Y-%m-%d"), datetime.now().strftime("%H:%M"),
+                    datetime.now(TW_TZ).strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"),
                     float(urea_l), int(urea_cost), ""
                 ]
                 ws_urea.append_row(new_urea_row)
@@ -341,7 +345,7 @@ with tab_fuel:
 with tab_export:
     st.subheader("標準紙本 1:1 還原列印")
     exp_y = st.selectbox("年份", [2026, 2027], index=0)
-    exp_m = st.selectbox("月份", list(range(1, 13)), index=datetime.now().month - 1)
+    exp_m = st.selectbox("月份", list(range(1, 13)), index=datetime.now(TW_TZ).month - 1)
 
     excel_file = generate_kertz_excel(exp_y, exp_m)
 
