@@ -70,10 +70,21 @@ def load_data():
 
 load_data()
 
+# 取得經過排序後的最新車況數值 (防錯機制)
+sorted_all_logs = sorted(st.session_state.daily_logs, key=lambda x: str(x.get("日期", "")))
+latest_log = sorted_all_logs[-1]
+latest_return_mileage = int(latest_log["返廠里程"])
+
+sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: str(x.get("加油日期", "")))
+latest_fuel_log = sorted_fuel_logs[-1]
+latest_fuel_mileage = int(latest_fuel_log["加油里程"])
+
+driven_since_fuel = latest_return_mileage - latest_fuel_mileage
+rem_service = SERVICE_TARGET - latest_return_mileage
+
 # ================= 動態保養預測邏輯 =================
 def calculate_service_prediction(logs, target_mileage):
     if len(logs) < 2: return "資料不足"
-    # 強制將資料按日期排序，確保就算補登也能抓到正確的「最新」里程
     sorted_logs = sorted(logs, key=lambda x: str(x.get("日期", "")))
     current_mileage = int(sorted_logs[-1].get("返廠里程", 0))
     recent_logs = sorted_logs[-7:] if len(sorted_logs) >= 7 else sorted_logs
@@ -94,53 +105,7 @@ def calculate_service_prediction(logs, target_mileage):
     except:
         return "計算中"
 
-# ================= 動態尿素預測邏輯 =================
-def calculate_urea_prediction(urea_logs, logs):
-    if len(urea_logs) < 1 or len(logs) < 2: return "資料不足"
-    sorted_logs = sorted(logs, key=lambda x: str(x.get("日期", "")))
-    try:
-        recent_logs = sorted_logs[-7:] if len(sorted_logs) >= 7 else sorted_logs
-        first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
-        last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
-        days_diff = (last_date - first_date).days
-        if days_diff <= 0: return "需更多天數"
-        mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
-        avg_daily_km = mileage_diff / days_diff
-        if avg_daily_km <= 0: return "里程未增加"
-
-        sorted_urea = sorted(urea_logs, key=lambda x: str(x.get("添加日期", "")))
-        last_urea = sorted_urea[-1]
-        liters = float(last_urea.get("公升數", 20))
-        km_per_liter = 50 
-        total_range_km = liters * km_per_liter
-        days_remaining = int(total_range_km / avg_daily_km)
-        est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
-        return est_date.strftime("%m月%d日")
-    except:
-        return "計算中"
-
-# 取得經過排序後的最新車況數值 (防錯機制)
-sorted_all_logs = sorted(st.session_state.daily_logs, key=lambda x: str(x.get("日期", "")))
-latest_log = sorted_all_logs[-1]
-latest_return_mileage = int(latest_log["返廠里程"])
-
-sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: str(x.get("加油日期", "")))
-latest_fuel_log = sorted_fuel_logs[-1]
-latest_fuel_mileage = int(latest_fuel_log["加油里程"])
-
 est_service_date = calculate_service_prediction(st.session_state.daily_logs, SERVICE_TARGET)
-est_urea_date = calculate_urea_prediction(st.session_state.urea_logs, st.session_state.daily_logs)
-
-# ================= 智慧加油均算邏輯 =================
-driven_since_fuel = latest_return_mileage - latest_fuel_mileage
-def get_fuel_recommendation(delta_km):
-    if delta_km < 340: return ("🟢 油量充裕（今日免加油）", f"距上次加油已跑 {delta_km} km，油箱尚有餘裕，跑完今日行程完全沒問題。", "success")
-    elif 340 <= delta_km < 420: return ("🟡 建議今日【南下】在中油苗栗站加油", f"已跑 {delta_km} km。去程順下苗栗站加滿最穩當，避免回程塞車逼近警戒線。", "warning")
-    elif 420 <= delta_km < 480: return ("🔵 建議今日【北上】回程在中油苗栗站加油", f"已跑 {delta_km} km。足夠跑到后里美光，回程北上剛好湊滿約 500 km 進站加滿，節奏最佳。", "info")
-    else: return ("🔴 油量警戒：今日【南下】必須立刻加油", f"已跑 {delta_km} km，已達進站極限，去程請務必在中油苗栗站補油！", "error")
-
-fuel_status, fuel_tip, fuel_level = get_fuel_recommendation(driven_since_fuel)
-rem_service = SERVICE_TARGET - latest_return_mileage
 
 # ================= 1:1 原樣 A4 報表生成引擎 =================
 def generate_kertz_excel(year: int, month: int):
@@ -221,11 +186,8 @@ def generate_kertz_excel(year: int, month: int):
         cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 
     prefix = f"{year:04d}-{month:02d}"
-    
-    # 核心升級：在這裡加入自動排序 (Auto-Sort)，確保匯出的 Excel A4 表格永遠照 1~31 號順序排好！
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
     m_logs = sorted(m_logs, key=lambda x: str(x.get("日期", "")))
-    
     f_map = {str(fl["加油日期"]): fl for fl in st.session_state.fuel_logs if str(fl.get("加油日期", "")).startswith(prefix)}
 
     start_row = 5
@@ -286,24 +248,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
+# ================= 極簡儀表板 =================
 c_dash1, c_dash2 = st.columns(2)
 with c_dash1:
     st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
 with c_dash2:
-    st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta=f"尿素預估用完：{est_urea_date}", delta_color="off")
+    st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta="清爽模式", delta_color="off")
 
-if fuel_level == "success": st.success(f"**{fuel_status}**\n\n{fuel_tip}")
-elif fuel_level == "warning": st.warning(f"**{fuel_status}**\n\n{fuel_tip}")
-elif fuel_level == "info": st.info(f"**{fuel_status}**\n\n{fuel_tip}")
-else: st.error(f"**{fuel_status}**\n\n{fuel_tip}")
+# ================= 顯示系統提示訊息 (處理漏登警告與成功訊息) =================
+if "sys_msg" in st.session_state:
+    if st.session_state.sys_msg_type == "warning":
+        st.warning(st.session_state.sys_msg)
+    else:
+        st.success(st.session_state.sys_msg)
+    del st.session_state.sys_msg
+    del st.session_state.sys_msg_type
 
+# ================= 功能頁籤 =================
 tab_daily, tab_history, tab_fuel, tab_export = st.tabs(["📝 返廠登記", "📋 歷史修改", "⛽ 油/尿素", "🖨️ A4 匯出"])
 
 with tab_daily:
     st.subheader("每日返廠單次結算")
     with st.form("quick_daily_form"):
-        # UI 更新提示：讓使用者知道這裡可以直接點擊補登
-        f_date = st.date_input("日期 (可點擊修改補登)", datetime.now(TW_TZ))
+        f_date = st.date_input("日期", datetime.now(TW_TZ))
         f_user = st.text_input("使用人", value=DEFAULT_USER)
         f_dest_select = st.selectbox("目的地 (點選快捷)", st.session_state.destinations)
         f_dest_custom = st.text_input("或輸入新目的地 (選填)")
@@ -311,26 +278,40 @@ with tab_daily:
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             f_start_time = st.text_input("出發時間", value="07:20")
-            f_start_mil = st.number_input("出發里程 (預設為系統最新里程)", value=latest_return_mileage, disabled=False) # 開放補登修改
+            f_start_mil = st.number_input("出發里程 (鎖定前次)", value=latest_return_mileage, disabled=True)
         with col_t2:
             f_ret_time = st.text_input("返廠時間", value=datetime.now(TW_TZ).strftime("%H:%M"))
             def_return = latest_return_mileage + 23 if "順益" in f_dest_select else latest_return_mileage + 170
             f_ret_mil = st.number_input("返廠里程 (請看儀表板輸入)", value=def_return, step=1)
 
         submit_daily = st.form_submit_button("💾 儲存今日紀錄，同步至雲端", use_container_width=True)
+        
         if submit_daily:
             dest_final = f_dest_custom.strip() if f_dest_custom.strip() else f_dest_select
+            diff_km = int(f_ret_mil) - int(f_start_mil)
+            
+            # 漏登智慧判斷邏輯
+            expected_km = 170 if "美光" in dest_final else (23 if "順益" in dest_final else 50)
+            
             new_row = [
                 f_date.strftime("%Y-%m-%d"), f_user, dest_final, 
                 f_start_time, int(f_start_mil), f_ret_time, int(f_ret_mil), ""
             ]
             ws_daily.append_row(new_row)
-            st.success(f"✅ {f_date.strftime('%m/%d')} 的紀錄已寫入 Google Sheets！")
+            
+            # 判斷增加的里程是否異常超過預期 (容許 80km 誤差)
+            if diff_km > (expected_km + 80):
+                st.session_state.sys_msg = f"⚠️ 【漏登提醒】本次輸入增加了 {diff_km} km (正常約 {expected_km} km)。紀錄已存入，但請至「歷史修改」確認前幾天是否漏填！"
+                st.session_state.sys_msg_type = "warning"
+            else:
+                st.session_state.sys_msg = f"✅ {f_date.strftime('%m/%d')} 的紀錄已寫入 Google Sheets！"
+                st.session_state.sys_msg_type = "success"
+                
             st.rerun()
 
 with tab_history:
     st.subheader("📱 雙層過濾：手機專用歷史修改")
-    st.caption("先選月份，再選日期，就算用十年也瞬間找到資料！(補登資料會自動排序)")
+    st.caption("先選月份，再選日期，就算用十年也瞬間找到資料！")
     
     if not st.session_state.daily_logs:
         st.info("目前沒有歷史資料可修改")
@@ -340,12 +321,11 @@ with tab_history:
         
         log_options = []
         for idx, log in enumerate(st.session_state.daily_logs):
-            sheet_row_num = idx + 2 # 記住雲端試算表的真實列號，刪改才不會出錯
+            sheet_row_num = idx + 2
             if str(log.get('日期', '')).startswith(selected_month):
                 label = f"[{log.get('日期')}] {log.get('目的地')} (返廠: {log.get('返廠里程')})"
                 log_options.append((sheet_row_num, label, log))
                 
-        # 核心升級：就算 Google Sheet 裡面的順序因為補登而亂掉，顯示給你看的選單一定會重新排整齊！
         log_options = sorted(log_options, key=lambda x: str(x[2].get('日期', '')), reverse=True)
         
         if not log_options:
@@ -379,12 +359,14 @@ with tab_history:
                 if btn_save_edit:
                     updated_row = [e_date, e_user, e_dest, e_st_time, int(e_st_mil), e_ret_time, int(e_ret_mil), str(target_log.get("備註", ""))]
                     ws_daily.update(values=[updated_row], range_name=f"A{target_row_num}:H{target_row_num}")
-                    st.success(f"✅ 資料已完美更新至雲端！")
+                    st.session_state.sys_msg = "✅ 資料已更新至雲端！"
+                    st.session_state.sys_msg_type = "success"
                     st.rerun()
                     
                 if btn_delete:
                     ws_daily.delete_rows(target_row_num)
-                    st.warning(f"🗑️ 該筆紀錄已徹底刪除！")
+                    st.session_state.sys_msg = "🗑️ 該筆紀錄已徹底刪除！"
+                    st.session_state.sys_msg_type = "warning"
                     st.rerun()
 
 with tab_fuel:
@@ -404,7 +386,8 @@ with tab_fuel:
                     int(fuel_m), float(fuel_l), int(fuel_cost), fuel_station
                 ]
                 ws_fuel.append_row(new_fuel_row)
-                st.success("✅ 柴油紀錄已上傳！")
+                st.session_state.sys_msg = "✅ 柴油紀錄已上傳！"
+                st.session_state.sys_msg_type = "success"
                 st.rerun()
 
     with c_f2:
@@ -419,7 +402,8 @@ with tab_fuel:
                     float(urea_l), int(urea_cost), ""
                 ]
                 ws_urea.append_row(new_urea_row)
-                st.success("✅ 尿素紀錄已上傳！")
+                st.session_state.sys_msg = "✅ 尿素紀錄已上傳！"
+                st.session_state.sys_msg_type = "success"
                 st.rerun()
 
 with tab_export:
