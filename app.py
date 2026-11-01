@@ -59,7 +59,7 @@ def load_data():
         }]
     if not urea_data:
         urea_data = [{
-            "添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加"
+            "添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加", "添加當下里程": 614997
         }]
         
     st.session_state.daily_logs = daily_data
@@ -70,16 +70,10 @@ def load_data():
 
 load_data()
 
-# 取得經過排序後的最新車況數值 (防錯機制)
+# 取得最新里程數據
 sorted_all_logs = sorted(st.session_state.daily_logs, key=lambda x: str(x.get("日期", "")))
 latest_log = sorted_all_logs[-1]
 latest_return_mileage = int(latest_log["返廠里程"])
-
-sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: str(x.get("加油日期", "")))
-latest_fuel_log = sorted_fuel_logs[-1]
-latest_fuel_mileage = int(latest_fuel_log["加油里程"])
-
-driven_since_fuel = latest_return_mileage - latest_fuel_mileage
 rem_service = SERVICE_TARGET - latest_return_mileage
 
 # ================= 動態保養預測邏輯 =================
@@ -248,14 +242,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
-# ================= 極簡儀表板 =================
-c_dash1, c_dash2 = st.columns(2)
-with c_dash1:
-    st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
-with c_dash2:
-    st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta="清爽模式", delta_color="off")
+# ================= 極簡儀表板 (已移除所有加油指標) =================
+st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
 
-# ================= 顯示系統提示訊息 (處理漏登警告與成功訊息) =================
+# ================= 系統提示 =================
 if "sys_msg" in st.session_state:
     if st.session_state.sys_msg_type == "warning":
         st.warning(st.session_state.sys_msg)
@@ -265,7 +255,7 @@ if "sys_msg" in st.session_state:
     del st.session_state.sys_msg_type
 
 # ================= 功能頁籤 =================
-tab_daily, tab_history, tab_fuel, tab_export = st.tabs(["📝 返廠登記", "📋 歷史修改", "⛽ 油/尿素", "🖨️ A4 匯出"])
+tab_daily, tab_history, tab_stats, tab_export = st.tabs(["📝 返廠登記", "📋 歷史修改", "📊 油耗與尿素", "🖨️ A4 匯出"])
 
 with tab_daily:
     st.subheader("每日返廠單次結算")
@@ -290,7 +280,6 @@ with tab_daily:
             dest_final = f_dest_custom.strip() if f_dest_custom.strip() else f_dest_select
             diff_km = int(f_ret_mil) - int(f_start_mil)
             
-            # 漏登智慧判斷邏輯
             expected_km = 170 if "美光" in dest_final else (23 if "順益" in dest_final else 50)
             
             new_row = [
@@ -299,9 +288,8 @@ with tab_daily:
             ]
             ws_daily.append_row(new_row)
             
-            # 判斷增加的里程是否異常超過預期 (容許 80km 誤差)
             if diff_km > (expected_km + 80):
-                st.session_state.sys_msg = f"⚠️ 【漏登提醒】本次輸入增加了 {diff_km} km (正常約 {expected_km} km)。紀錄已存入，但請至「歷史修改」確認前幾天是否漏填！"
+                st.session_state.sys_msg = f"⚠️ 【漏登提醒】本次增加了 {diff_km} km (正常約 {expected_km} km)。紀錄已存入，請至「歷史修改」確認是否漏填！"
                 st.session_state.sys_msg_type = "warning"
             else:
                 st.session_state.sys_msg = f"✅ {f_date.strftime('%m/%d')} 的紀錄已寫入 Google Sheets！"
@@ -310,8 +298,8 @@ with tab_daily:
             st.rerun()
 
 with tab_history:
-    st.subheader("📱 雙層過濾：手機專用歷史修改")
-    st.caption("先選月份，再選日期，就算用十年也瞬間找到資料！")
+    st.subheader("📱 手機專用歷史修改")
+    st.caption("先選月份，再選日期，自動重新排序！")
     
     if not st.session_state.daily_logs:
         st.info("目前沒有歷史資料可修改")
@@ -369,7 +357,49 @@ with tab_history:
                     st.session_state.sys_msg_type = "warning"
                     st.rerun()
 
-with tab_fuel:
+with tab_stats:
+    st.subheader("📊 耗能統計與添加紀錄")
+    
+    # 簡單計算油耗 (取最後兩筆計算)
+    sorted_fuels = sorted(st.session_state.fuel_logs, key=lambda x: str(x.get("加油日期", "")))
+    if len(sorted_fuels) >= 2:
+        try:
+            last_f = sorted_fuels[-1]
+            prev_f = sorted_fuels[-2]
+            km_driven = int(last_f.get("加油里程", 0)) - int(prev_f.get("加油里程", 0))
+            liters = float(last_f.get("公升數", 1))
+            fuel_km_l = round(km_driven / liters, 2) if liters > 0 else 0
+            fuel_text = f"{fuel_km_l} km/L"
+        except:
+            fuel_text = "計算異常"
+    else:
+        fuel_text = "尚無足夠資料"
+
+    # 簡單計算尿素耗能 (需依賴新版有存里程的資料)
+    sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
+    urea_with_mil = [u for u in sorted_urea if "添加當下里程" in u and str(u["添加當下里程"]).isdigit()]
+    
+    if len(urea_with_mil) >= 2:
+        try:
+            last_u = urea_with_mil[-1]
+            prev_u = urea_with_mil[-2]
+            km_u_driven = int(last_u["添加當下里程"]) - int(prev_u["添加當下里程"])
+            u_liters = float(last_u.get("公升數", 1))
+            urea_km_l = round(km_u_driven / u_liters, 2) if u_liters > 0 else 0
+            urea_text = f"{urea_km_l} km/L"
+        except:
+            urea_text = "計算異常"
+    else:
+        urea_text = "累積新版紀錄中"
+
+    c_s1, c_s2 = st.columns(2)
+    with c_s1:
+        st.metric("近期平均油耗", fuel_text)
+    with c_s2:
+        st.metric("近期尿素耗能", urea_text)
+        
+    st.divider()
+    
     c_f1, c_f2 = st.columns(2)
     with c_f1:
         st.markdown("### ⛽ 柴油加油")
@@ -393,13 +423,15 @@ with tab_fuel:
     with c_f2:
         st.markdown("### 💧 尿素添加")
         with st.form("urea_form"):
+            urea_d = st.date_input("添加日期", datetime.now(TW_TZ), key="ud")
+            urea_m = st.number_input("添加當下里程", value=latest_return_mileage, step=1)
             urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
             urea_cost = st.number_input("實付費用 (元)", value=500, step=10)
             sub_urea = st.form_submit_button("紀錄尿素並同步", use_container_width=True)
             if sub_urea:
                 new_urea_row = [
-                    datetime.now(TW_TZ).strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"),
-                    float(urea_l), int(urea_cost), ""
+                    urea_d.strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"),
+                    float(urea_l), int(urea_cost), "", int(urea_m)
                 ]
                 ws_urea.append_row(new_urea_row)
                 st.session_state.sys_msg = "✅ 尿素紀錄已上傳！"
