@@ -488,7 +488,7 @@ with tab_stats:
             fuel_m = st.number_input("加油當下里程", value=latest_return_mileage, step=1)
             fuel_l = st.number_input("公升數 (L)", value=150.0, step=0.1)
             fuel_cost = st.number_input("實付費用 (元)", value=4500, step=10)
-            fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"])
+            fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油頭份站", "其他"])
             sub_fuel = st.form_submit_button("紀錄柴油", use_container_width=True)
             if sub_fuel:
                 new_fuel_row = [fuel_d.strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"), int(fuel_m), float(fuel_l), int(fuel_cost), fuel_station]
