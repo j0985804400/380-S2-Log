@@ -36,19 +36,22 @@ ws_daily = sh.worksheet("Daily_Logs")
 ws_fuel = sh.worksheet("Fuel_Logs")
 ws_urea = sh.worksheet("Urea_Logs")
 
-# 自動初始化設定分頁 
+# 自動初始化與讀取設定分頁 (加入油箱總容量)
 sheet_titles = [w.title for w in sh.worksheets()]
 if "Settings" not in sheet_titles:
     ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
-    ws_settings.append_row(["SERVICE_TARGET", 622000])
+    ws_settings.update(values=[["SERVICE_TARGET", 622000], ["FUEL_TANK_CAPACITY", 150.0]], range_name="A1:B2")
 else:
     ws_settings = sh.worksheet("Settings")
 
 try:
-    target_val = ws_settings.cell(1, 2).value
-    st.session_state.service_target = int(target_val) if target_val else 622000
+    settings_vals = ws_settings.get_all_values()
+    settings_dict = {row[0]: row[1] for row in settings_vals if len(row) >= 2}
 except:
-    st.session_state.service_target = 622000
+    settings_dict = {}
+
+st.session_state.service_target = int(settings_dict.get("SERVICE_TARGET", 622000))
+st.session_state.fuel_tank_capacity = float(settings_dict.get("FUEL_TANK_CAPACITY", 150.0))
 
 # ================= 資料同步與快取 =================
 def load_data():
@@ -81,10 +84,9 @@ latest_log = sorted_all_logs[-1]
 latest_return_mileage = int(latest_log["返廠里程"])
 rem_service = st.session_state.service_target - latest_return_mileage
 
-sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: str(x.get("加油日期", "")))
+sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: int(x.get("加油里程", 0)))
 latest_fuel_log = sorted_fuel_logs[-1]
 latest_fuel_mileage = int(latest_fuel_log["加油里程"])
-latest_fuel_liters = float(latest_fuel_log.get("公升數", 1))
 driven_since_fuel = latest_return_mileage - latest_fuel_mileage
 
 if len(sorted_fuel_logs) >= 2:
@@ -98,6 +100,28 @@ if len(sorted_fuel_logs) >= 2:
         global_fuel_km_l = 3.8
 else:
     global_fuel_km_l = 3.8
+
+# ================= 連續虛擬油箱 (推算油底) =================
+# 從歷史第一筆加油開始推演，精準計算出「最後一次加油後的實際剩餘油量」
+tank_cap = st.session_state.fuel_tank_capacity
+curr_vol = tank_cap  # 假設最一開始有加滿
+
+last_f_mil = int(sorted_fuel_logs[0].get("加油里程", 0)) if sorted_fuel_logs else latest_return_mileage
+for f_log in sorted_fuel_logs:
+    f_mil = int(f_log.get("加油里程", 0))
+    add_l = float(f_log.get("公升數", 0))
+    
+    # 扣除這段期間消耗的油
+    dist = f_mil - last_f_mil
+    if dist > 0: curr_vol -= (dist / global_fuel_km_l)
+    if curr_vol < 0: curr_vol = 0
+    
+    # 加上這次加的油，並受限於油箱總容量
+    curr_vol += add_l
+    if curr_vol > tank_cap: curr_vol = tank_cap
+    last_f_mil = f_mil
+
+vol_after_last_fuel = curr_vol # 這就是最後一次加油完，油箱裡真正擁有的公升數 (含油底)
 
 # ================= 動態保養預測邏輯 =================
 def calculate_service_prediction(logs, target_mileage):
@@ -367,24 +391,27 @@ with tab_stats:
     with c_dash2:
         st.metric("近期平均油耗", f"{global_fuel_km_l} km/L")
 
-    # ---------------- 核心升級：北上苗栗保衛戰 (即時安全水位運算) ----------------
+    # ---------------- 核心升級：北上苗栗保衛戰 (含油底推算) ----------------
     st.divider()
-    st.markdown("### 📍 北上苗栗保衛戰 (即時續航評估)")
-    st.caption("未加滿或被派去中科時，出發前輸入儀表板，確認油箱殘血能否撐到苗栗。")
+    st.markdown("### 📍 北上苗栗保衛戰 (精準含油底評估)")
+    st.caption("將油箱底部的預備油納入考量，就算是部分加油或臨時長途也能精準判斷！")
     
     current_eval_mil = st.number_input("目前儀表板里程 (準備北上時)", value=latest_return_mileage, step=1)
     
-    # 採用「虛擬油箱水位」最保守估計：只計算上次加進去的油，扣除已行駛里程
+    # 扣掉上次加油後所跑的里程，得出當下「真實剩餘油量」與「真實剩餘里程」
     used_km_since_fuel = current_eval_mil - latest_fuel_mileage
-    safe_theoretical_range = int(latest_fuel_liters * global_fuel_km_l)
-    rem_safe_km = max(0, safe_theoretical_range - used_km_since_fuel)
+    used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
+    current_vol = max(0, vol_after_last_fuel - used_vol_since_fuel)
+    rem_safe_km = int(current_vol * global_fuel_km_l)
+    
+    st.info(f"💡 推估油箱內含油底約剩餘 **{current_vol:.1f} 公升**")
     
     if rem_safe_km < 60:
-        st.error(f"🔴 極度危險！保守剩餘續航僅 {rem_safe_km} km (中科/后里至苗栗需 25~45 km)，請立刻在當地補油！")
+        st.error(f"🔴 極度危險！含油底續航僅剩 {rem_safe_km} km (中科/后里至苗栗需 25~45 km)，請立刻在當地平面補油！")
     elif 60 <= rem_safe_km < 100:
-        st.warning(f"🟡 警戒！保守剩餘續航 {rem_safe_km} km，足夠撐到苗栗，但上高速公路前請注意塞車路況。")
+        st.warning(f"🟡 警戒！含油底續航剩 {rem_safe_km} km，足夠撐到苗栗，但上高速公路前請務必確認無塞車回堵。")
     else:
-        st.success(f"✅ 安全過關！保守剩餘續航還有 {rem_safe_km} km，北上抵達中油苗栗站完全沒問題。")
+        st.success(f"✅ 安全過關！含油底續航還有 {rem_safe_km} km，北上抵達中油苗栗站完全沒問題。")
 
     st.divider()
     c_u1, c_u2 = st.columns(2)
@@ -473,10 +500,12 @@ with tab_settings:
     st.subheader("⚙️ 系統參數設定")
     with st.form("settings_form"):
         new_target = st.number_input("下次保養里程目標 (km)", value=st.session_state.service_target, step=1000)
-        submit_settings = st.form_submit_button("💾 儲存保養目標", use_container_width=True)
+        new_tank = st.number_input("車輛總油箱容量 (公升 L)", value=st.session_state.fuel_tank_capacity, step=10.0)
+        submit_settings = st.form_submit_button("💾 儲存設定檔", use_container_width=True)
         if submit_settings:
-            ws_settings.update_cell(1, 2, new_target)
+            ws_settings.update(values=[["SERVICE_TARGET", new_target], ["FUEL_TANK_CAPACITY", new_tank]], range_name="A1:B2")
             st.session_state.service_target = new_target
-            st.session_state.sys_msg = f"✅ 保養目標已永久更新為 {new_target:,} km！"
+            st.session_state.fuel_tank_capacity = new_tank
+            st.session_state.sys_msg = "✅ 系統參數已永久更新！"
             st.session_state.sys_msg_type = "success"
             st.rerun()
