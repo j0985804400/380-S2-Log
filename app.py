@@ -100,7 +100,7 @@ if len(sorted_fuel_logs) >= 2:
 else:
     global_fuel_km_l = 3.8
 
-# ================= 提取日均行駛里程 (用於預測) =================
+# ================= 提取日均行駛里程 =================
 def get_avg_daily_km(logs):
     recent_logs = logs[-30:] if len(logs) >= 30 else logs
     if len(recent_logs) >= 2:
@@ -122,7 +122,7 @@ max_liters_added = max([float(f.get("公升數", 0)) for f in sorted_fuel_logs])
 learned_tank_cap = float(math.ceil(max_liters_added / 10.0) * 10)
 tank_cap = max(base_tank_capacity, learned_tank_cap)
 
-# ================= 連續虛擬油箱 (推算油底) =================
+# ================= 連續虛擬油箱 =================
 curr_vol = tank_cap  
 last_f_mil = int(sorted_fuel_logs[0].get("加油里程", 0)) if sorted_fuel_logs else latest_return_mileage
 for f_log in sorted_fuel_logs:
@@ -195,11 +195,7 @@ def generate_kertz_excel(year: int, month: int):
     align_center_no_wrap = Alignment(horizontal="center", vertical="center", wrap_text=False)
 
     ws.merge_cells("A1:G1")
-    rich_text = CellRichText(
-        TextBlock(InlineFont(b=False, sz=12, rFont=font_family), 'KT.T. '),
-        TextBlock(InlineFont(i=True, sz=8, rFont=font_family), 'Pro Clean Tech   '),
-        TextBlock(InlineFont(b=False, sz=12, rFont=font_family), '科治新技股份有限公司 標準作業表格')
-    )
+    rich_text = CellRichText(TextBlock(InlineFont(b=False, sz=12, rFont=font_family), 'KT.T. '), TextBlock(InlineFont(i=True, sz=8, rFont=font_family), 'Pro Clean Tech   '), TextBlock(InlineFont(b=False, sz=12, rFont=font_family), '科治新技股份有限公司 標準作業表格'))
     ws["A1"] = rich_text
     ws["A1"].alignment = align_center_no_wrap
     ws.merge_cells("H1:I1")
@@ -418,39 +414,36 @@ with tab_stats:
     
     # ---------------- 智慧決策分離運算 ----------------
     if urea_km_l > 0 and global_fuel_km_l > 0 and avg_daily_km > 0:
-        # 計算柴油剩餘 60km 時，還能撐幾天
         safe_fuel_vol = 60 / global_fuel_km_l
         usable_fuel_vol = max(0, vol_after_today - safe_fuel_vol)
         fuel_runnable_km = usable_fuel_vol * global_fuel_km_l
         fuel_days_left = fuel_runnable_km / avg_daily_km
         
-        # 計算尿素剩餘 5L 時，還能撐幾天
-        usable_urea_vol = max(0, rem_urea_vol - 5.0)
+        # 尿素容錯機制：以 8L 為絕對安全進站基準 (防護儀表非線性與抽不到底)
+        usable_urea_vol = max(0, rem_urea_vol - 8.0)
         urea_runnable_km = usable_urea_vol * urea_km_l
         urea_days_left = urea_runnable_km / avg_daily_km
 
         st.markdown("### 🔄 智慧進站策略 (下次該加什麼？)")
         
         if urea_runnable_km >= fuel_runnable_km:
-            # 正常情況：柴油會先耗盡
             target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(fuel_days_left))
             future_urea_vol = rem_urea_vol - (fuel_runnable_km / urea_km_l)
             
             st.success(f"✅ **預估進站日 (柴油主導)：【 {target_date.strftime('%m月%d日')} 】 (約再跑 {math.floor(fuel_days_left)} 天)**")
             
-            # 判斷未來的尿素水位，給出對應建議
+            # 以 8L 安全線為基準，避免柴油剛加滿隔天尿素就見底的尷尬狀況
             if future_urea_vol >= 8.0:
-                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n預計到了那天進站時，尿素大約還剩 **{future_urea_vol:.1f} 公升 (十分充足)**，無需理會，單純補滿柴油即可！")
+                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n預計到了那天進站時，尿素大約還剩 **{future_urea_vol:.1f} 公升 (大於 8L 安全底線，非常充足)**，單純補滿柴油即可！")
             else:
-                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n預計到了那天進站時，尿素大約只剩 **{future_urea_vol:.1f} 公升** (準備逼近警戒線)，建議直接兩管齊下一次加滿，省下再次進站的時間！")
+                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n預計到了那天進站時，尿素大約只剩 **{future_urea_vol:.1f} 公升** (準備逼近 8L 安全防護線)，建議直接兩管齊下一次加滿！")
                 
         else:
-            # 異常情況：尿素消耗過快或太久沒加，尿素會先耗盡
             target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(urea_days_left))
             future_fuel_vol = vol_after_today - (urea_runnable_km / global_fuel_km_l)
             
             st.error(f"🚨 **尿素告急！需提早進站：【 {target_date.strftime('%m月%d日')} 】 (約再跑 {math.floor(urea_days_left)} 天)**")
-            st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n因為尿素即將跌破 5L 危險警戒，必須提早進站！雖然屆時柴油大約還剩 **{future_fuel_vol:.1f} 公升**，但請直接連同柴油一起補滿，重新同步週期。")
+            st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n因為尿素即將跌破 8L 危險警戒，必須提早進站！雖然屆時柴油大約還剩 **{future_fuel_vol:.1f} 公升**，但請直接連同柴油一起補滿。")
     else:
         st.info("🔄 智慧預測引擎需要至少 2 筆以上的柴/尿紀錄，才能為您精準預測下次進站時機。")
 
@@ -472,9 +465,9 @@ with tab_stats:
     c_u1, c_u2 = st.columns(2)
     with c_u1:
         if urea_with_mil:
-            st.metric(label="距上次加尿素已跑", value=f"{driven_since_urea} km", delta=f"尿素約剩 {rem_urea_vol:.1f} L", delta_color="off")
+            st.metric(label="距上次加尿已跑", value=f"{driven_since_urea} km", delta=f"尿素約剩 {rem_urea_vol:.1f} L", delta_color="off")
         else:
-            st.metric(label="距上次加尿素已跑", value="資料不足")
+            st.metric(label="距上次加尿已跑", value="資料不足")
     with c_u2:
         if urea_km_l > 0:
             st.metric("近期尿素耗能", f"{urea_km_l} km/L")
@@ -482,8 +475,8 @@ with tab_stats:
             st.metric("近期尿素耗能", "資料不足")
             
     if urea_km_l > 0:
-        if 2.0 <= rem_urea_vol < 5.0: st.warning(f"🟡 **尿素偏低警戒**：僅剩 {rem_urea_vol:.1f} L (低於25%)，隨時準備添加。")
-        elif rem_urea_vol < 2.0: st.error(f"🔴 **尿素極度危險**：僅剩 {rem_urea_vol:.1f} L！避免鎖死，請【立刻】補加！")
+        if 4.0 <= rem_urea_vol < 8.0: st.warning(f"⚠️ 尿素警戒：僅剩 {rem_urea_vol:.1f} L (逼近 8L 安全防線)")
+        elif rem_urea_vol < 4.0: st.error(f"🔴 尿素危險：僅剩 {rem_urea_vol:.1f} L！避免抽不到底鎖死，請盡速補加！")
 
     # ---------------- 實體表單 ----------------
     st.divider()
