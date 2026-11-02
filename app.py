@@ -70,18 +70,22 @@ def load_data():
 
 load_data()
 
-# 取得最新里程數據
+# 取得最新數據
 sorted_all_logs = sorted(st.session_state.daily_logs, key=lambda x: str(x.get("日期", "")))
 latest_log = sorted_all_logs[-1]
 latest_return_mileage = int(latest_log["返廠里程"])
 rem_service = SERVICE_TARGET - latest_return_mileage
 
+sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: str(x.get("加油日期", "")))
+latest_fuel_log = sorted_fuel_logs[-1]
+latest_fuel_mileage = int(latest_fuel_log["加油里程"])
+driven_since_fuel = latest_return_mileage - latest_fuel_mileage
+
 # ================= 動態保養預測邏輯 =================
 def calculate_service_prediction(logs, target_mileage):
     if len(logs) < 2: return "資料不足"
-    sorted_logs = sorted(logs, key=lambda x: str(x.get("日期", "")))
-    current_mileage = int(sorted_logs[-1].get("返廠里程", 0))
-    recent_logs = sorted_logs[-7:] if len(sorted_logs) >= 7 else sorted_logs
+    current_mileage = int(logs[-1].get("返廠里程", 0))
+    recent_logs = logs[-7:] if len(logs) >= 7 else logs
     
     try:
         first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
@@ -99,7 +103,50 @@ def calculate_service_prediction(logs, target_mileage):
     except:
         return "計算中"
 
-est_service_date = calculate_service_prediction(st.session_state.daily_logs, SERVICE_TARGET)
+est_service_date = calculate_service_prediction(sorted_all_logs, SERVICE_TARGET)
+
+# ================= AI 動態油量推算引擎 =================
+def calculate_dynamic_fuel_target(fuel_logs):
+    if len(fuel_logs) < 2:
+        return 500, 340, 420, 480 # 預設防呆值
+        
+    try:
+        # 1. 抓出歷史「最高加油量」 (推估油箱最大可用容量)
+        max_liters = max([float(f.get("公升數", 130)) for f in fuel_logs])
+        
+        # 2. 抓出歷史「最長行駛里程」 (曾經挑戰過的最大極限)
+        distances = [int(fuel_logs[i].get("加油里程", 0)) - int(fuel_logs[i-1].get("加油里程", 0)) for i in range(1, len(fuel_logs))]
+        max_history_distance = max(distances) if distances else 500
+        
+        # 3. 算出近期的實際油耗
+        last_f = fuel_logs[-1]
+        prev_f = fuel_logs[-2]
+        recent_km = int(last_f.get("加油里程", 0)) - int(prev_f.get("加油里程", 0))
+        recent_liters = float(last_f.get("公升數", 1))
+        avg_km_l = recent_km / recent_liters if recent_liters > 0 else 3.8
+        
+        # 綜合計算：(最高加油量 * 近期油耗) 與 (歷史最長里程) 取高者
+        calculated_limit = int(max_liters * avg_km_l)
+        dyn_target = max(calculated_limit, max_history_distance)
+        
+        # 依據動態極限，切分黃金進站比例 (68%, 84%, 96%)
+        s_lim = int(dyn_target * 0.68)
+        w_lim = int(dyn_target * 0.84)
+        i_lim = int(dyn_target * 0.96)
+        
+        return dyn_target, s_lim, w_lim, i_lim
+    except:
+        return 500, 340, 420, 480
+
+dyn_target, s_lim, w_lim, i_lim = calculate_dynamic_fuel_target(sorted_fuel_logs)
+
+def get_fuel_recommendation(delta_km, limit_s, limit_w, limit_i):
+    if delta_km < limit_s: return ("🟢 油量充裕（今日免加油）", f"距上次加油已跑 {delta_km} km，距動態極限 {dyn_target} km 尚有餘裕。", "success")
+    elif limit_s <= delta_km < limit_w: return ("🟡 建議今日【南下】加滿", f"已跑 {delta_km} km。去程順下苗栗站加滿最穩當，避免回程塞車逼近警戒線。", "warning")
+    elif limit_w <= delta_km < limit_i: return ("🔵 建議今日【北上】回程加滿", f"已跑 {delta_km} km。剛好逼近最佳進站時機，回程北上湊滿加滿，節奏最佳。", "info")
+    else: return ("🔴 油量警戒：今日必須立刻補油", f"已跑 {delta_km} km，已達極限，請務必立刻加油！", "error")
+
+fuel_status, fuel_tip, fuel_level = get_fuel_recommendation(driven_since_fuel, s_lim, w_lim, i_lim)
 
 # ================= 1:1 原樣 A4 報表生成引擎 =================
 def generate_kertz_excel(year: int, month: int):
@@ -242,8 +289,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
-# ================= 極簡儀表板 (已移除所有加油指標) =================
-st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
+# ================= 極簡儀表板 =================
+c_dash1, c_dash2 = st.columns(2)
+with c_dash1:
+    st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
+with c_dash2:
+    st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta=f"AI 動態目標 {dyn_target} km", delta_color="off")
 
 # ================= 系統提示 =================
 if "sys_msg" in st.session_state:
@@ -279,7 +330,6 @@ with tab_daily:
         if submit_daily:
             dest_final = f_dest_custom.strip() if f_dest_custom.strip() else f_dest_select
             diff_km = int(f_ret_mil) - int(f_start_mil)
-            
             expected_km = 170 if "美光" in dest_final else (23 if "順益" in dest_final else 50)
             
             new_row = [
@@ -361,11 +411,10 @@ with tab_stats:
     st.subheader("📊 耗能統計與添加紀錄")
     
     # 簡單計算油耗 (取最後兩筆計算)
-    sorted_fuels = sorted(st.session_state.fuel_logs, key=lambda x: str(x.get("加油日期", "")))
-    if len(sorted_fuels) >= 2:
+    if len(sorted_fuel_logs) >= 2:
         try:
-            last_f = sorted_fuels[-1]
-            prev_f = sorted_fuels[-2]
+            last_f = sorted_fuel_logs[-1]
+            prev_f = sorted_fuel_logs[-2]
             km_driven = int(last_f.get("加油里程", 0)) - int(prev_f.get("加油里程", 0))
             liters = float(last_f.get("公升數", 1))
             fuel_km_l = round(km_driven / liters, 2) if liters > 0 else 0
@@ -375,7 +424,7 @@ with tab_stats:
     else:
         fuel_text = "尚無足夠資料"
 
-    # 簡單計算尿素耗能 (需依賴新版有存里程的資料)
+    # 簡單計算尿素耗能
     sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
     urea_with_mil = [u for u in sorted_urea if "添加當下里程" in u and str(u["添加當下里程"]).isdigit()]
     
@@ -392,6 +441,7 @@ with tab_stats:
     else:
         urea_text = "累積新版紀錄中"
 
+    # 儀表板
     c_s1, c_s2 = st.columns(2)
     with c_s1:
         st.metric("近期平均油耗", fuel_text)
@@ -399,6 +449,12 @@ with tab_stats:
         st.metric("近期尿素耗能", urea_text)
         
     st.divider()
+    
+    # 智慧進站提示
+    if fuel_level == "success": st.success(f"**{fuel_status}**\n\n{fuel_tip}")
+    elif fuel_level == "warning": st.warning(f"**{fuel_status}**\n\n{fuel_tip}")
+    elif fuel_level == "info": st.info(f"**{fuel_status}**\n\n{fuel_tip}")
+    else: st.error(f"**{fuel_status}**\n\n{fuel_tip}")
     
     c_f1, c_f2 = st.columns(2)
     with c_f1:
