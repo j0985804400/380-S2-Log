@@ -16,6 +16,7 @@ DEFAULT_KEEPER = "劉嘉舜"
 DEFAULT_USER = "劉嘉舜"
 DOC_CODE = "4-33-DC0007B"
 FORM_NAME = "公務車輛行車紀錄表 Rev.1"
+UREA_TANK_CAPACITY = 20.0  # 固定尿素桶容量 (公升)
 TW_TZ = timezone(timedelta(hours=8))
 
 # ================= Google Sheets 雲端連線設定 =================
@@ -296,7 +297,6 @@ st.markdown("""
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
 # ================= 極簡首頁儀表板 =================
-# 徹底移除加油指標，只保留目前里程與保養預估
 st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
 
 # ================= 系統提示 =================
@@ -411,10 +411,10 @@ with tab_history:
 with tab_stats:
     st.subheader("📊 進站指標與耗能統計")
     
-    # 將原本在首頁的加油指標全數移至此處
+    # ---------------- 基礎油耗與距離推算 ----------------
     c_dash1, c_dash2 = st.columns(2)
     with c_dash1:
-        st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta=f"AI 目標 {dyn_target} km", delta_color="off")
+        st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km", delta=f"AI 油量目標 {dyn_target} km", delta_color="off")
     
     if len(sorted_fuel_logs) >= 2:
         try:
@@ -429,25 +429,59 @@ with tab_stats:
     else:
         fuel_text = "尚無足夠資料"
 
+    with c_dash2:
+        st.metric("近期平均油耗", fuel_text)
+
+    # ---------------- 核心升級：20L尿素推算 ----------------
+    st.divider()
+    c_u1, c_u2 = st.columns(2)
+    
     sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
     urea_with_mil = [u for u in sorted_urea if "添加當下里程" in u and str(u["添加當下里程"]).isdigit()]
     
+    urea_km_l = 0.0
+    driven_since_urea = 0
+    max_urea_range = 0
+    rem_urea_km = 0
+    
+    if urea_with_mil:
+        last_urea_mil = int(urea_with_mil[-1]["添加當下里程"])
+        driven_since_urea = latest_return_mileage - last_urea_mil
+        
     if len(urea_with_mil) >= 2:
         try:
             last_u = urea_with_mil[-1]
             prev_u = urea_with_mil[-2]
             km_u_driven = int(last_u["添加當下里程"]) - int(prev_u["添加當下里程"])
             u_liters = float(last_u.get("公升數", 1))
-            urea_km_l = round(km_u_driven / u_liters, 2) if u_liters > 0 else 0
-            urea_text = f"{urea_km_l} km/L"
+            if u_liters > 0:
+                urea_km_l = round(km_u_driven / u_liters, 2)
+                urea_text = f"{urea_km_l} km/L"
+                # 利用你指定的 20L 桶容量來推算極限
+                max_urea_range = int(UREA_TANK_CAPACITY * urea_km_l)
+                rem_urea_km = max(0, max_urea_range - driven_since_urea)
+            else:
+                urea_text = "計算異常"
         except:
             urea_text = "計算異常"
     else:
         urea_text = "累積新版紀錄中"
 
-    with c_dash2:
-        st.metric("近期平均油耗", fuel_text)
-        
+    with c_u1:
+        if urea_with_mil:
+            st.metric(label="距上次加尿素已跑", value=f"{driven_since_urea} km", delta=f"20L桶極限 {max_urea_range:,} km" if max_urea_range > 0 else "計算中", delta_color="off")
+        else:
+            st.metric(label="距上次加尿素已跑", value="資料不足")
+            
+    with c_u2:
+        if urea_km_l > 0:
+            # 精準推算還剩下多少公里能跑
+            st.metric("近期尿素耗能", urea_text, delta=f"預估還能跑 {rem_urea_km:,} km", delta_color="normal")
+        else:
+            st.metric("近期尿素耗能", urea_text)
+
+    # ---------------- 油量智慧提示框 ----------------
+    st.divider()
     if fuel_level == "success": st.success(f"**{fuel_status}**\n\n{fuel_tip}")
     elif fuel_level == "warning": st.warning(f"**{fuel_status}**\n\n{fuel_tip}")
     elif fuel_level == "info": st.info(f"**{fuel_status}**\n\n{fuel_tip}")
@@ -455,6 +489,7 @@ with tab_stats:
     
     st.divider()
     
+    # ---------------- 實體表單 ----------------
     c_f1, c_f2 = st.columns(2)
     with c_f1:
         st.markdown("### ⛽ 柴油加油")
