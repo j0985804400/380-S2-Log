@@ -37,7 +37,7 @@ ws_daily = sh.worksheet("Daily_Logs")
 ws_fuel = sh.worksheet("Fuel_Logs")
 ws_urea = sh.worksheet("Urea_Logs")
 
-# 自動初始化設定分頁 
+# ================= 設定檔初始化與讀取 =================
 sheet_titles = [w.title for w in sh.worksheets()]
 if "Settings" not in sheet_titles:
     ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
@@ -52,7 +52,6 @@ except:
     settings_dict = {}
 
 st.session_state.service_target = int(settings_dict.get("SERVICE_TARGET", 622000))
-# 手動設定作為最低保底值，後續會被 AI 自動覆蓋拉高
 base_tank_capacity = float(settings_dict.get("FUEL_TANK_CAPACITY", 130.0))
 
 # ================= 資料同步與快取 =================
@@ -80,7 +79,6 @@ def load_data():
 
 load_data()
 
-# 取得最新數據與全域油耗
 sorted_all_logs = sorted(st.session_state.daily_logs, key=lambda x: str(x.get("日期", "")))
 latest_log = sorted_all_logs[-1]
 latest_return_mileage = int(latest_log["返廠里程"])
@@ -89,7 +87,6 @@ rem_service = st.session_state.service_target - latest_return_mileage
 sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: int(x.get("加油里程", 0)))
 latest_fuel_log = sorted_fuel_logs[-1]
 latest_fuel_mileage = int(latest_fuel_log["加油里程"])
-driven_since_fuel = latest_return_mileage - latest_fuel_mileage
 
 if len(sorted_fuel_logs) >= 2:
     try:
@@ -103,58 +100,84 @@ if len(sorted_fuel_logs) >= 2:
 else:
     global_fuel_km_l = 3.8
 
-# ================= AI 油箱容量自動微調 (Auto-Scaling) =================
-# 抓取歷史加過最多的油量
+# ================= 提取日均行駛里程 (用於預測) =================
+def get_avg_daily_km(logs):
+    recent_logs = logs[-30:] if len(logs) >= 30 else logs
+    if len(recent_logs) >= 2:
+        try:
+            first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
+            last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
+            days_diff = (last_date - first_date).days
+            if days_diff > 0:
+                mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
+                return mileage_diff / days_diff
+        except:
+            pass
+    return 170.0 
+
+avg_daily_km = get_avg_daily_km(sorted_all_logs)
+
+# ================= AI 油箱容量自動微調 =================
 max_liters_added = max([float(f.get("公升數", 0)) for f in sorted_fuel_logs]) if sorted_fuel_logs else 130.0
-# 無條件進位到下一個 10 的倍數 (例如 124 -> 130, 142 -> 150)
 learned_tank_cap = float(math.ceil(max_liters_added / 10.0) * 10)
-# 取「手動設定」與「AI學習最高值」的高者，確保只升不降
 tank_cap = max(base_tank_capacity, learned_tank_cap)
 
 # ================= 連續虛擬油箱 (推算油底) =================
-curr_vol = tank_cap  # 假設最一開始有加滿
-
+curr_vol = tank_cap  
 last_f_mil = int(sorted_fuel_logs[0].get("加油里程", 0)) if sorted_fuel_logs else latest_return_mileage
 for f_log in sorted_fuel_logs:
     f_mil = int(f_log.get("加油里程", 0))
     add_l = float(f_log.get("公升數", 0))
-    
-    # 扣除這段期間消耗的油
     dist = f_mil - last_f_mil
     if dist > 0: curr_vol -= (dist / global_fuel_km_l)
     if curr_vol < 0: curr_vol = 0
-    
-    # 加上這次加的油，並受限於動態油箱上限
     curr_vol += add_l
     if curr_vol > tank_cap: curr_vol = tank_cap
     last_f_mil = f_mil
 
-vol_after_last_fuel = curr_vol # 加完油後油箱內含油底的公升數
+used_km_since_fuel = latest_return_mileage - latest_fuel_mileage
+used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
+vol_after_today = max(0, curr_vol - used_vol_since_fuel)
 
-# ================= 動態保養預測邏輯 =================
+# ================= 尿素消耗推算 =================
+sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
+urea_with_mil = [u for u in sorted_urea if "添加當下里程" in u and str(u["添加當下里程"]).isdigit()]
+
+urea_km_l = 0.0
+driven_since_urea = 0
+rem_urea_vol = 0.0
+
+if urea_with_mil:
+    last_urea_mil = int(urea_with_mil[-1]["添加當下里程"])
+    driven_since_urea = latest_return_mileage - last_urea_mil
+    
+if len(urea_with_mil) >= 2:
+    try:
+        last_u = urea_with_mil[-1]
+        prev_u = urea_with_mil[-2]
+        km_u_driven = int(last_u["添加當下里程"]) - int(prev_u["添加當下里程"])
+        u_liters = float(last_u.get("公升數", 1))
+        if u_liters > 0:
+            urea_km_l = round(km_u_driven / u_liters, 2)
+            used_urea_vol = driven_since_urea / urea_km_l
+            rem_urea_vol = max(0.0, UREA_TANK_CAPACITY - used_urea_vol)
+    except:
+        pass
+
+# ================= 動態保養預測 =================
 def calculate_service_prediction(logs, target_mileage):
     if len(logs) < 2: return "資料不足"
     current_mileage = int(logs[-1].get("返廠里程", 0))
-    recent_logs = logs[-7:] if len(logs) >= 7 else logs
-    try:
-        first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
-        last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
-        days_diff = (last_date - first_date).days
-        if days_diff <= 0: return "需更多天數"
-        mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
-        avg_daily_km = mileage_diff / days_diff
-        if avg_daily_km <= 0: return "里程未增加"
-        km_remaining = target_mileage - current_mileage
-        if km_remaining <= 0: return "已達保養里程"
-        days_remaining = int(km_remaining / avg_daily_km)
-        est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
-        return est_date.strftime("%m月%d日")
-    except:
-        return "計算中"
+    km_remaining = target_mileage - current_mileage
+    if km_remaining <= 0: return "已達保養里程"
+    if avg_daily_km <= 0: return "計算中"
+    days_remaining = int(km_remaining / avg_daily_km)
+    est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
+    return est_date.strftime("%m月%d日")
 
 est_service_date = calculate_service_prediction(sorted_all_logs, st.session_state.service_target)
 
-# ================= 1:1 原樣 A4 報表生成引擎 =================
+# ================= 1:1 原樣 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -286,7 +309,6 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
-# 極簡首頁儀表板
 st.metric(label="目前最新里程", value=f"{latest_return_mileage:,} km", delta=f"距保養剩 {rem_service:,} km ｜ 預估：{est_service_date}", delta_color="normal")
 
 if "sys_msg" in st.session_state:
@@ -295,7 +317,7 @@ if "sys_msg" in st.session_state:
     del st.session_state.sys_msg
     del st.session_state.sys_msg_type
 
-tab_daily, tab_history, tab_stats, tab_export, tab_settings = st.tabs(["📝 登記", "📋 修改", "📊 油耗", "🖨️ 匯出", "⚙️ 設定"])
+tab_daily, tab_history, tab_stats, tab_export, tab_settings = st.tabs(["📝 登記", "📋 修改", "📊 油耗預測", "🖨️ 匯出", "⚙️ 設定"])
 
 with tab_daily:
     st.subheader("每日返廠單次結算")
@@ -392,78 +414,78 @@ with tab_history:
                     st.rerun()
 
 with tab_stats:
-    st.subheader("📊 耗能統計與即時續航評估")
+    st.subheader("📊 未來進站日預測引擎")
+    
+    # ---------------- 智慧決策分離運算 ----------------
+    if urea_km_l > 0 and global_fuel_km_l > 0 and avg_daily_km > 0:
+        # 計算柴油剩餘 60km 時，還能撐幾天
+        safe_fuel_vol = 60 / global_fuel_km_l
+        usable_fuel_vol = max(0, vol_after_today - safe_fuel_vol)
+        fuel_runnable_km = usable_fuel_vol * global_fuel_km_l
+        fuel_days_left = fuel_runnable_km / avg_daily_km
+        
+        # 計算尿素剩餘 5L 時，還能撐幾天
+        usable_urea_vol = max(0, rem_urea_vol - 5.0)
+        urea_runnable_km = usable_urea_vol * urea_km_l
+        urea_days_left = urea_runnable_km / avg_daily_km
+
+        st.markdown("### 🔄 智慧進站策略 (下次該加什麼？)")
+        
+        if urea_runnable_km >= fuel_runnable_km:
+            # 正常情況：柴油會先耗盡
+            target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(fuel_days_left))
+            future_urea_vol = rem_urea_vol - (fuel_runnable_km / urea_km_l)
+            
+            st.success(f"✅ **預估進站日 (柴油主導)：【 {target_date.strftime('%m月%d日')} 】 (約再跑 {math.floor(fuel_days_left)} 天)**")
+            
+            # 判斷未來的尿素水位，給出對應建議
+            if future_urea_vol >= 8.0:
+                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n預計到了那天進站時，尿素大約還剩 **{future_urea_vol:.1f} 公升 (十分充足)**，無需理會，單純補滿柴油即可！")
+            else:
+                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n預計到了那天進站時，尿素大約只剩 **{future_urea_vol:.1f} 公升** (準備逼近警戒線)，建議直接兩管齊下一次加滿，省下再次進站的時間！")
+                
+        else:
+            # 異常情況：尿素消耗過快或太久沒加，尿素會先耗盡
+            target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(urea_days_left))
+            future_fuel_vol = vol_after_today - (urea_runnable_km / global_fuel_km_l)
+            
+            st.error(f"🚨 **尿素告急！需提早進站：【 {target_date.strftime('%m月%d日')} 】 (約再跑 {math.floor(urea_days_left)} 天)**")
+            st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n因為尿素即將跌破 5L 危險警戒，必須提早進站！雖然屆時柴油大約還剩 **{future_fuel_vol:.1f} 公升**，但請直接連同柴油一起補滿，重新同步週期。")
+    else:
+        st.info("🔄 智慧預測引擎需要至少 2 筆以上的柴/尿紀錄，才能為您精準預測下次進站時機。")
+
+    # ---------------- 基礎耗能與當下狀態 ----------------
+    st.divider()
+    st.markdown(f"**目前車輛剩餘狀況** (以今日返廠 {latest_return_mileage} km 結算)")
+    
     c_dash1, c_dash2 = st.columns(2)
     with c_dash1:
-        st.metric(label="距上次加油已跑", value=f"{driven_since_fuel} km")
+        st.metric(label="距上次加油已跑", value=f"{used_km_since_fuel} km", delta=f"柴油約剩 {vol_after_today:.1f} L", delta_color="off")
     with c_dash2:
         st.metric("近期平均油耗", f"{global_fuel_km_l} km/L")
-
-    # ---------------- 北上苗栗保衛戰 (結合 AI 動態油箱推算) ----------------
-    st.divider()
-    st.markdown("### 📍 北上苗栗保衛戰 (精準含油底評估)")
-    st.caption(f"🤖 AI 已根據歷史最大加油量，自動將油箱極限微調至 **{tank_cap} L**。")
+        
+    rem_safe_km = int(vol_after_today * global_fuel_km_l)
+    if rem_safe_km < 60: st.error(f"🔴 柴油極危險！含油底續航僅剩 {rem_safe_km} km，請立刻就近補油！")
+    elif 60 <= rem_safe_km < 100: st.warning(f"🟡 柴油警戒！續航剩 {rem_safe_km} km，上高速前請確認無塞車。")
     
-    current_eval_mil = st.number_input("目前儀表板里程 (準備北上時)", value=latest_return_mileage, step=1)
-    
-    # 扣掉上次加油後所跑的里程，得出當下「真實剩餘油量」與「真實剩餘里程」
-    used_km_since_fuel = current_eval_mil - latest_fuel_mileage
-    used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
-    current_vol = max(0, vol_after_last_fuel - used_vol_since_fuel)
-    rem_safe_km = int(current_vol * global_fuel_km_l)
-    
-    st.info(f"💡 推估油箱內含油底約剩餘 **{current_vol:.1f} 公升**")
-    
-    if rem_safe_km < 60:
-        st.error(f"🔴 極度危險！含油底續航僅剩 {rem_safe_km} km (中科/后里至苗栗需 25~45 km)，請立刻在當地平面補油！")
-    elif 60 <= rem_safe_km < 100:
-        st.warning(f"🟡 警戒！含油底續航剩 {rem_safe_km} km，足夠撐到苗栗，但上高速公路前請務必確認無塞車回堵。")
-    else:
-        st.success(f"✅ 安全過關！含油底續航還有 {rem_safe_km} km，北上抵達中油苗栗站完全沒問題。")
-
     st.divider()
     c_u1, c_u2 = st.columns(2)
-    sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
-    urea_with_mil = [u for u in sorted_urea if "添加當下里程" in u and str(u["添加當下里程"]).isdigit()]
-    
-    urea_km_l = 0.0
-    driven_since_urea = 0
-    max_urea_range = 0
-    rem_urea_km = 0
-    
-    if urea_with_mil:
-        last_urea_mil = int(urea_with_mil[-1]["添加當下里程"])
-        driven_since_urea = latest_return_mileage - last_urea_mil
-        
-    if len(urea_with_mil) >= 2:
-        try:
-            last_u = urea_with_mil[-1]
-            prev_u = urea_with_mil[-2]
-            km_u_driven = int(last_u["添加當下里程"]) - int(prev_u["添加當下里程"])
-            u_liters = float(last_u.get("公升數", 1))
-            if u_liters > 0:
-                urea_km_l = round(km_u_driven / u_liters, 2)
-                urea_text = f"{urea_km_l} km/L"
-                max_urea_range = int(UREA_TANK_CAPACITY * urea_km_l)
-                rem_urea_km = max(0, max_urea_range - driven_since_urea)
-            else:
-                urea_text = "計算異常"
-        except:
-            urea_text = "計算異常"
-    else:
-        urea_text = "累積新版紀錄中"
-
     with c_u1:
         if urea_with_mil:
-            st.metric(label="距上次加尿素已跑", value=f"{driven_since_urea} km", delta=f"20L桶極限 {max_urea_range:,} km" if max_urea_range > 0 else "計算中", delta_color="off")
+            st.metric(label="距上次加尿素已跑", value=f"{driven_since_urea} km", delta=f"尿素約剩 {rem_urea_vol:.1f} L", delta_color="off")
         else:
             st.metric(label="距上次加尿素已跑", value="資料不足")
     with c_u2:
         if urea_km_l > 0:
-            st.metric("近期尿素耗能", urea_text, delta=f"預估還能跑 {rem_urea_km:,} km", delta_color="normal")
+            st.metric("近期尿素耗能", f"{urea_km_l} km/L")
         else:
-            st.metric("近期尿素耗能", urea_text)
+            st.metric("近期尿素耗能", "資料不足")
+            
+    if urea_km_l > 0:
+        if 2.0 <= rem_urea_vol < 5.0: st.warning(f"🟡 **尿素偏低警戒**：僅剩 {rem_urea_vol:.1f} L (低於25%)，隨時準備添加。")
+        elif rem_urea_vol < 2.0: st.error(f"🔴 **尿素極度危險**：僅剩 {rem_urea_vol:.1f} L！避免鎖死，請【立刻】補加！")
 
+    # ---------------- 實體表單 ----------------
     st.divider()
     c_f1, c_f2 = st.columns(2)
     with c_f1:
@@ -508,7 +530,6 @@ with tab_settings:
     st.subheader("⚙️ 系統參數設定")
     with st.form("settings_form"):
         new_target = st.number_input("下次保養里程目標 (km)", value=st.session_state.service_target, step=1000)
-        # 把油箱容量的輸入框改成純顯示，因為現在交給 AI 接管了
         st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前由 AI 自動微調鎖定在：{tank_cap} L*")
         submit_settings = st.form_submit_button("💾 儲存保養目標", use_container_width=True)
         if submit_settings:
