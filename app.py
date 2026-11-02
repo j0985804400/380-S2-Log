@@ -1,4 +1,5 @@
 import json
+import math
 from datetime import datetime, timedelta, timezone
 import io
 import openpyxl
@@ -36,11 +37,11 @@ ws_daily = sh.worksheet("Daily_Logs")
 ws_fuel = sh.worksheet("Fuel_Logs")
 ws_urea = sh.worksheet("Urea_Logs")
 
-# 自動初始化與讀取設定分頁 (加入油箱總容量)
+# 自動初始化設定分頁 
 sheet_titles = [w.title for w in sh.worksheets()]
 if "Settings" not in sheet_titles:
     ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
-    ws_settings.update(values=[["SERVICE_TARGET", 622000], ["FUEL_TANK_CAPACITY", 150.0]], range_name="A1:B2")
+    ws_settings.update(values=[["SERVICE_TARGET", 622000], ["FUEL_TANK_CAPACITY", 130.0]], range_name="A1:B2")
 else:
     ws_settings = sh.worksheet("Settings")
 
@@ -51,7 +52,8 @@ except:
     settings_dict = {}
 
 st.session_state.service_target = int(settings_dict.get("SERVICE_TARGET", 622000))
-st.session_state.fuel_tank_capacity = float(settings_dict.get("FUEL_TANK_CAPACITY", 150.0))
+# 手動設定作為最低保底值，後續會被 AI 自動覆蓋拉高
+base_tank_capacity = float(settings_dict.get("FUEL_TANK_CAPACITY", 130.0))
 
 # ================= 資料同步與快取 =================
 def load_data():
@@ -101,9 +103,15 @@ if len(sorted_fuel_logs) >= 2:
 else:
     global_fuel_km_l = 3.8
 
+# ================= AI 油箱容量自動微調 (Auto-Scaling) =================
+# 抓取歷史加過最多的油量
+max_liters_added = max([float(f.get("公升數", 0)) for f in sorted_fuel_logs]) if sorted_fuel_logs else 130.0
+# 無條件進位到下一個 10 的倍數 (例如 124 -> 130, 142 -> 150)
+learned_tank_cap = float(math.ceil(max_liters_added / 10.0) * 10)
+# 取「手動設定」與「AI學習最高值」的高者，確保只升不降
+tank_cap = max(base_tank_capacity, learned_tank_cap)
+
 # ================= 連續虛擬油箱 (推算油底) =================
-# 從歷史第一筆加油開始推演，精準計算出「最後一次加油後的實際剩餘油量」
-tank_cap = st.session_state.fuel_tank_capacity
 curr_vol = tank_cap  # 假設最一開始有加滿
 
 last_f_mil = int(sorted_fuel_logs[0].get("加油里程", 0)) if sorted_fuel_logs else latest_return_mileage
@@ -116,12 +124,12 @@ for f_log in sorted_fuel_logs:
     if dist > 0: curr_vol -= (dist / global_fuel_km_l)
     if curr_vol < 0: curr_vol = 0
     
-    # 加上這次加的油，並受限於油箱總容量
+    # 加上這次加的油，並受限於動態油箱上限
     curr_vol += add_l
     if curr_vol > tank_cap: curr_vol = tank_cap
     last_f_mil = f_mil
 
-vol_after_last_fuel = curr_vol # 這就是最後一次加油完，油箱裡真正擁有的公升數 (含油底)
+vol_after_last_fuel = curr_vol # 加完油後油箱內含油底的公升數
 
 # ================= 動態保養預測邏輯 =================
 def calculate_service_prediction(logs, target_mileage):
@@ -391,10 +399,10 @@ with tab_stats:
     with c_dash2:
         st.metric("近期平均油耗", f"{global_fuel_km_l} km/L")
 
-    # ---------------- 核心升級：北上苗栗保衛戰 (含油底推算) ----------------
+    # ---------------- 北上苗栗保衛戰 (結合 AI 動態油箱推算) ----------------
     st.divider()
     st.markdown("### 📍 北上苗栗保衛戰 (精準含油底評估)")
-    st.caption("將油箱底部的預備油納入考量，就算是部分加油或臨時長途也能精準判斷！")
+    st.caption(f"🤖 AI 已根據歷史最大加油量，自動將油箱極限微調至 **{tank_cap} L**。")
     
     current_eval_mil = st.number_input("目前儀表板里程 (準備北上時)", value=latest_return_mileage, step=1)
     
@@ -500,12 +508,12 @@ with tab_settings:
     st.subheader("⚙️ 系統參數設定")
     with st.form("settings_form"):
         new_target = st.number_input("下次保養里程目標 (km)", value=st.session_state.service_target, step=1000)
-        new_tank = st.number_input("車輛總油箱容量 (公升 L)", value=st.session_state.fuel_tank_capacity, step=10.0)
-        submit_settings = st.form_submit_button("💾 儲存設定檔", use_container_width=True)
+        # 把油箱容量的輸入框改成純顯示，因為現在交給 AI 接管了
+        st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前由 AI 自動微調鎖定在：{tank_cap} L*")
+        submit_settings = st.form_submit_button("💾 儲存保養目標", use_container_width=True)
         if submit_settings:
-            ws_settings.update(values=[["SERVICE_TARGET", new_target], ["FUEL_TANK_CAPACITY", new_tank]], range_name="A1:B2")
+            ws_settings.update(values=[["SERVICE_TARGET", new_target], ["FUEL_TANK_CAPACITY", base_tank_capacity]], range_name="A1:B2")
             st.session_state.service_target = new_target
-            st.session_state.fuel_tank_capacity = new_tank
-            st.session_state.sys_msg = "✅ 系統參數已永久更新！"
+            st.session_state.sys_msg = f"✅ 保養目標已永久更新為 {new_target:,} km！"
             st.session_state.sys_msg_type = "success"
             st.rerun()
