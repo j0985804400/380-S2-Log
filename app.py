@@ -237,7 +237,7 @@ def calculate_service_prediction(target_mileage):
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
 
-# ================= 1:1 原樣 A4 報表生成（已修正 A3 右側無謂框線） =================
+# ================= 1:1 原樣 A4 報表生成（像素級完美還原） =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -288,7 +288,7 @@ def generate_kertz_excel(year: int, month: int):
 
     roc_year = year - 1911
     
-    # 第三列：行車日誌 (合併 A3:B3，右側 B3 無框線以符合實體單)
+    # 第三列：行車日誌 (合併 A3:B3)
     ws.merge_cells("A3:B3")
     ws["A3"] = "行車日誌"
     ws["A3"].font = font_bold_md
@@ -299,19 +299,19 @@ def generate_kertz_excel(year: int, month: int):
     ws["C3"].font = font_bold_md
     ws["C3"].alignment = align_center
 
-    headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
+    # 第四列：表頭標題 (「日期」強制換行直排顯示)
+    headers = ["日\n期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
     for col_idx, text in enumerate(headers, start=1):
         cell = ws.cell(row=4, column=col_idx, value=text)
         cell.font = font_bold_md
-        cell.alignment = align_center
+        cell.alignment = align_center # wrap_text 讓日/期上下排列
 
-    # 針對第三列的特殊邊框處理（移除 A3與B3 之間、以及 B3 與 C3 之間的隔線視覺干擾）
     for r in range(1, 5):
         ws.row_dimensions[r].height = 28
         for c in range(1, 10):
             ws.cell(row=r, column=c).border = border_all
     
-    # 修正 A3:B3 合併後的右側線條讓它融入整體
+    # 精準消除 A3與B3 之間的視覺隔線，還原實體單風格
     ws["A3"].border = Border(top=thin, left=thin, bottom=thin)
     ws["B3"].border = Border(top=thin, right=thin, bottom=thin)
 
