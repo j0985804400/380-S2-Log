@@ -137,13 +137,15 @@ if len(sorted_fuel_logs) >= 3:
 else:
     historical_km_l = global_fuel_km_l
 
+# ================= 修復日均里程演算法 =================
 def get_avg_daily_km(logs):
     recent_logs = logs[-30:] if len(logs) >= 30 else logs
     if len(recent_logs) >= 2:
         try:
             first_date = datetime.strptime(str(recent_logs[0]["日期"]), "%Y-%m-%d")
             last_date = datetime.strptime(str(recent_logs[-1]["日期"]), "%Y-%m-%d")
-            days_diff = (last_date - first_date).days
+            # 修正 Off-by-one 錯誤：加上 1 天包容頭尾出勤
+            days_diff = (last_date - first_date).days + 1
             if days_diff > 0:
                 mileage_diff = int(recent_logs[-1]["返廠里程"]) - int(recent_logs[0]["出發里程"])
                 return mileage_diff / days_diff
@@ -223,12 +225,12 @@ def calculate_service_prediction(logs, target_mileage):
 
 est_service_date = calculate_service_prediction(sorted_all_logs, st.session_state.service_target)
 
-# ================= 1:1 原樣 A4 報表生成 (極致排版更新) =================
+# ================= 1:1 原樣 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = f"{month}月行車紀錄"
-    ws.views.sheetView[0].showGridLines = False # 關閉網格線，視覺更乾淨
+    ws.views.sheetView[0].showGridLines = False
     
     font_family = "Microsoft JhengHei"
     font_bold_md = Font(name=font_family, size=11, bold=True)
@@ -241,13 +243,11 @@ def generate_kertz_excel(year: int, month: int):
     align_right = Alignment(horizontal="right", vertical="center")
     align_left = Alignment(horizontal="left", vertical="center")
     
-    # 設定極窄邊距，徹底利用 A4 空間
     ws.page_margins.left = 0.25
     ws.page_margins.right = 0.25
     ws.page_margins.top = 0.5
     ws.page_margins.bottom = 0.5
 
-    # 第一列
     ws.merge_cells("A1:G1")
     rich_text = CellRichText(
         TextBlock(InlineFont(b=False, sz=12, rFont=font_family), 'KT.T. '), 
@@ -261,7 +261,6 @@ def generate_kertz_excel(year: int, month: int):
     ws["H1"].font = font_header_sub
     ws["H1"].alignment = align_left
     
-    # 第二列
     ws.merge_cells("A2:B2")
     ws["A2"] = "表格名稱"
     ws["A2"].font = Font(name=font_family, size=12)
@@ -275,7 +274,6 @@ def generate_kertz_excel(year: int, month: int):
     ws["H2"].font = Font(name=font_family, size=10)
     ws["H2"].alignment = align_left
 
-    # 第三列 (無縫合併，還原實體排版)
     roc_year = year - 1911
     ws.merge_cells("A3:B3")
     ws["A3"] = "行車日誌"
@@ -287,16 +285,14 @@ def generate_kertz_excel(year: int, month: int):
     ws["C3"].font = font_bold_md
     ws["C3"].alignment = align_center
 
-    # 第四列 (標題)
     headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
     for col_idx, text in enumerate(headers, start=1):
         cell = ws.cell(row=4, column=col_idx, value=text)
         cell.font = font_bold_md
         cell.alignment = align_center
 
-    # 表頭高度與框線 (1~4列)
     for r in range(1, 5):
-        ws.row_dimensions[r].height = 28 # 加高表頭
+        ws.row_dimensions[r].height = 28
         for c in range(1, 10): 
             ws.cell(row=r, column=c).border = border_all
 
@@ -305,11 +301,10 @@ def generate_kertz_excel(year: int, month: int):
     m_logs = sorted(m_logs, key=lambda x: str(x.get("日期", "")))
     f_map = {str(fl["加油日期"]): fl for fl in st.session_state.fuel_logs if str(fl.get("加油日期", "")).startswith(prefix)}
 
-    # 填入 31 列資料行
     start_row = 5
     for i in range(31):
         curr_row = start_row + i
-        ws.row_dimensions[curr_row].height = 24.5 # 爆改高度，完美撐滿 A4
+        ws.row_dimensions[curr_row].height = 24.5
         
         if i < len(m_logs):
             log = m_logs[i]
@@ -339,17 +334,9 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    # 欄寬完美比例調校 (還原手寫實體單)
     col_widths = {
-        "A": 4.5,   # 日期(極窄)
-        "B": 7.5,   # 使用人
-        "C": 14.0,  # 目的地(加寬)
-        "D": 9.5,   # 出發時間
-        "E": 12.5,  # 出發里程
-        "F": 9.5,   # 返廠時間
-        "G": 12.5,  # 返廠里程
-        "H": 12.5,  # 加油里程
-        "I": 10.5   # 加油費用
+        "A": 4.5, "B": 7.5, "C": 14.0, "D": 9.5, "E": 12.5, 
+        "F": 9.5, "G": 12.5, "H": 12.5, "I": 10.5
     }
     for col, width in col_widths.items(): 
         ws.column_dimensions[col].width = width
@@ -358,7 +345,7 @@ def generate_kertz_excel(year: int, month: int):
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
     ws.page_setup.fitToPage = True
     ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 1 # 強制縮放鎖定 1 頁
+    ws.page_setup.fitToHeight = 1
     
     buf = io.BytesIO()
     wb.save(buf)
@@ -376,7 +363,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
-# ================= 綜合提醒儀表板 (極致壓縮戰術版) =================
+# ================= 綜合提醒儀表板 =================
 svc_color = "#00c04b" if "月" not in est_service_date else "gray"
 svc_text = f"預估 {est_service_date}"
 
