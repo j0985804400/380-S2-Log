@@ -622,7 +622,7 @@ with tab_stats:
             future_fuel_vol = vol_after_today - (urea_runnable_km / global_fuel_km_l)
             
             st.error(f"🚨 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
-            st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n開到 **{target_urea_mil:,} km** 時尿素將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
+            st.warning(f"💡 **決策：【以補尿素為主，柴初順便加滿】**\n\n開到 **{target_urea_mil:,} km** 時尿素將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
     else:
         st.info("🔄 智慧預測引擎需要至少 2 筆以上的柴/尿紀錄來運算。")
 
@@ -662,37 +662,36 @@ with tab_stats:
 
     st.divider()
     
-    # ================= 🚀 補給站整合主控中心 (支援雙向一鍵同步) =================
+    # ================= 🚀 補給站整合主控中心 =================
     st.markdown("### ⛽💧 補給站登記中心")
     if default_station_mil > latest_return_mileage:
         st.caption(f"🤖 **神預測同步**：AI 已自動預載預估進站里程，您只需微調最後幾碼即可！")
     else:
-        st.caption("💡 輸入當下儀表板里程，可勾選同時登記柴油或尿素，一鍵上傳！")
+        st.caption("💡 輸入當下儀表板里程，可自由勾選同時登記柴油或尿素，一鍵上傳！")
     
     with st.form("station_master_form"):
         shared_station_mil = st.number_input("補給當下儀表板總里程 (km)", value=int(default_station_mil), step=1)
         station_date = st.date_input("補給日期", SHIFT_DATE)
         
         st.markdown("---")
-        # 彈性開關：預設勾選柴油，尿素依據當天是否添加勾選
-        chk_fuel = st.checkbox("⛽ 登記柴油", value=True)
+        chk_fuel = st.checkbox("☑️ 登記柴油", value=True)
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
-            fuel_l = st.number_input("柴油公升數 (L)", value=150.0, step=0.1, disabled=not chk_fuel)
+            fuel_l = st.number_input("柴油公升數 (L)", value=150.0, step=0.1)  # 拔除 disabled 鎖定
         with col_f2:
-            fuel_cost = st.number_input("柴油實付費用 (元)", value=4500, step=10, disabled=not chk_fuel)
+            fuel_cost = st.number_input("柴油實付費用 (元)", value=4500, step=10) # 拔除 disabled 鎖定
         with col_f3:
-            fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"], disabled=not chk_fuel)
+            fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"])
             
         st.markdown("---")
-        chk_urea = st.checkbox("💧 登記尿素", value=False)
+        chk_urea = st.checkbox("☑️ 登記尿素", value=False)
         col_u1, col_u2 = st.columns(2)
         with col_u1:
-            urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0, disabled=not chk_urea)
+            urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0) # 拔除 disabled 鎖定
         with col_u2:
-            urea_cost = st.number_input("尿素費用 (元)", value=500, step=10, disabled=not chk_urea)
+            urea_cost = st.number_input("尿素費用 (元)", value=500, step=10) # 拔除 disabled 鎖定
             
-        submit_station = st.form_submit_button("🚀 一鍵同步儲存所有勾選紀錄", use_container_width=True)
+        submit_station = st.form_submit_button("🚀 一鍵同步儲存 (只會上傳有打勾的項目)", use_container_width=True)
         
         if submit_station:
             if not chk_fuel and not chk_urea:
@@ -711,7 +710,7 @@ with tab_stats:
                     ws_urea.append_row(new_urea_row)
                     msg_list.append("尿素")
                     
-                st.session_state.sys_msg = f"✅ 【{' ＋ '.join(msg_list)}】補給紀錄已成功寫入 Google Sheets！"
+                st.session_state.sys_msg = f"✅ 【{' ＋ '.join(msg_list)}】補給紀錄已成功寫入雲端！"
                 st.session_state.sys_msg_type = "success"
                 st.rerun()
 
