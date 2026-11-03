@@ -236,40 +236,55 @@ def generate_kertz_excel(year: int, month: int):
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
-    # 【關鍵物理換算】上方2公分(~0.8吋)，左右1公分(~0.4吋)
+    # 物理極限還原：上方約2公分(~0.8吋)，左右約1公分(~0.4吋)
     ws.page_margins.top = 0.8
     ws.page_margins.bottom = 0.5
     ws.page_margins.left = 0.4
     ws.page_margins.right = 0.4
 
-    ws.merge_cells("A1:G1")
-    rich_text = CellRichText(
-        TextBlock(InlineFont(b=False, sz=12, rFont=font_family), 'KT.T. '), 
-        TextBlock(InlineFont(i=True, sz=9, rFont=font_family), 'Pro Clean Tech   '), 
-        TextBlock(InlineFont(b=False, sz=12, rFont=font_family), '科治新技股份有限公司 標準作業表格')
-    )
-    ws["A1"] = rich_text
+    # 專業防呆畫框引擎：只畫外框，徹底根除手機版Excel亂加內線的問題
+    def style_merged_range(ws, start_col, start_row, end_col, end_row):
+        for r in range(start_row, end_row + 1):
+            for c in range(start_col, end_col + 1):
+                top = thin if r == start_row else None
+                bottom = thin if r == end_row else None
+                left = thin if c == start_col else None
+                right = thin if c == end_col else None
+                ws.cell(row=r, column=c).border = Border(top=top, bottom=bottom, left=left, right=right)
+
+    merges = [
+        (1, 1, 1, 7), # A1:G1
+        (1, 8, 1, 9), # H1:I1
+        (2, 1, 2, 2), # A2:B2
+        (2, 3, 2, 7), # C2:G2
+        (2, 8, 2, 9), # H2:I2
+        (3, 1, 3, 9), # A3:I3 (大一統合併，沒有內線干擾)
+    ]
+    for sr, sc, er, ec in merges:
+        ws.merge_cells(start_row=sr, start_column=sc, end_row=er, end_column=ec)
+        style_merged_range(ws, sc, sr, ec, er)
+
+    ws["A1"] = "KT.T. Pro Clean Tech  科治新技股份有限公司 標準作業表格"
+    ws["A1"].font = font_bold_md
     ws["A1"].alignment = align_center
-    ws.merge_cells("H1:I1")
+
     ws["H1"] = "頁次："
     ws["H1"].font = font_header_sub
     ws["H1"].alignment = align_left
     
-    ws.merge_cells("A2:B2")
     ws["A2"] = "表格名稱"
     ws["A2"].font = Font(name=font_family, size=12)
     ws["A2"].alignment = align_center
-    ws.merge_cells("C2:G2")
+
     ws["C2"] = "公務車輛行車紀錄表 Rev.1"
     ws["C2"].font = Font(name=font_family, size=12)
     ws["C2"].alignment = align_center
-    ws.merge_cells("H2:I2")
+
     ws["H2"] = f"編號：{DOC_CODE}"
     ws["H2"].font = Font(name=font_family, size=10)
     ws["H2"].alignment = align_left
 
     roc_year = year - 1911
-    ws.merge_cells("A3:I3")
     ws["A3"] = f"行車日誌               月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_left 
@@ -279,11 +294,10 @@ def generate_kertz_excel(year: int, month: int):
         cell = ws.cell(row=4, column=col_idx, value=text)
         cell.font = font_bold_md
         cell.alignment = align_center 
+        cell.border = border_all
 
     for r in range(1, 5):
         ws.row_dimensions[r].height = 28
-        for c in range(1, 10):
-            ws.cell(row=r, column=c).border = border_all
 
     prefix = f"{year:04d}-{month:02d}"
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
@@ -320,16 +334,18 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
+    # ================= 終極救贖：真實比例欄寬重置 =================
+    # 完全顛倒B欄與C欄的寬度，B欄極寬，C欄縮窄
     col_widths = {
-        "A": 5.0,   
-        "B": 8.0,   
-        "C": 14.0,  
-        "D": 11.0,  
-        "E": 11.5,  
-        "F": 11.0,  
-        "G": 11.5,  
-        "H": 11.5,  
-        "I": 11.0   
+        "A": 5.0,   # 日期
+        "B": 15.0,  # 使用人 (這欄超級寬，完全對齊實體單！)
+        "C": 8.5,   # 目的地 (這欄才是窄的！)
+        "D": 10.5,  # 出發時間
+        "E": 12.0,  # 出發里程數
+        "F": 10.5,  # 返廠時間
+        "G": 12.0,  # 返廠里程數
+        "H": 12.0,  # 加油里程數
+        "I": 10.5   # 加油費用
     }
     for col, width in col_widths.items(): ws.column_dimensions[col].width = width
 
