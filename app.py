@@ -673,4 +673,18 @@ with tab_settings:
         new_v_date = st.date_input("下次驗車到期日", next_v_date)
         new_e_date = st.date_input("下次驗排氣到期日", next_e_date)
         st.markdown("---")
-        st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前
+        st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前由 AI 自動微調鎖定在：{tank_cap} L*")
+        
+        submit_settings = st.form_submit_button("💾 儲存所有設定", use_container_width=True)
+        if submit_settings:
+            update_vals = [
+                ["SERVICE_TARGET", new_target],
+                ["FUEL_TANK_CAPACITY", base_tank_capacity],
+                ["NEXT_VEHICLE_INSP", new_v_date.strftime("%Y-%m-%d")],
+                ["NEXT_EMISSIONS_INSP", new_e_date.strftime("%Y-%m-%d")]
+            ]
+            ws_settings.update(values=update_vals, range_name="A1:B4")
+            st.session_state.service_target = new_target
+            st.session_state.sys_msg = "✅ 所有保養與檢驗目標已更新並存入雲端！"
+            st.session_state.sys_msg_type = "success"
+            st.rerun()
