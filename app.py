@@ -99,9 +99,9 @@ latest_log = sorted_all_logs[-1]
 latest_return_mileage = int(latest_log["返廠里程"])
 rem_service = st.session_state.service_target - latest_return_mileage
 
+# ================= 柴油消耗運算 (AI動態上限 + 存摺記帳) =================
 sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: int(x.get("加油里程", 0)))
-latest_fuel_log = sorted_fuel_logs[-1]
-latest_fuel_mileage = int(latest_fuel_log["加油里程"])
+latest_fuel_mileage = int(sorted_fuel_logs[-1]["加油里程"])
 
 if len(sorted_fuel_logs) >= 2:
     try:
@@ -144,10 +144,12 @@ def get_avg_daily_km(logs):
 
 avg_daily_km = get_avg_daily_km(sorted_all_logs)
 
+# AI 油桶上限
 max_liters_added = max([float(f.get("公升數", 0)) for f in sorted_fuel_logs]) if sorted_fuel_logs else 130.0
 learned_tank_cap = float(math.ceil(max_liters_added / 10.0) * 10)
 tank_cap = max(base_tank_capacity, learned_tank_cap)
 
+# 柴油連續虛擬油箱推算
 curr_vol = tank_cap  
 last_f_mil = int(sorted_fuel_logs[0].get("加油里程", 0)) if sorted_fuel_logs else latest_return_mileage
 for f_log in sorted_fuel_logs:
@@ -164,30 +166,51 @@ used_km_since_fuel = latest_return_mileage - latest_fuel_mileage
 used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
 vol_after_today = max(0, curr_vol - used_vol_since_fuel)
 
+
+# ================= 尿素消耗運算 (升級：連續存摺記帳法) =================
 sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
 urea_with_mil = [u for u in sorted_urea if "添加當下里程" in u and str(u["添加當下里程"]).isdigit()]
+urea_with_mil = sorted(urea_with_mil, key=lambda x: int(x["添加當下里程"]))
 
-urea_km_l = 0.0
-driven_since_urea = 0
-rem_urea_vol = 0.0
-
-if urea_with_mil:
-    last_urea_mil = int(urea_with_mil[-1]["添加當下里程"])
-    driven_since_urea = latest_return_mileage - last_urea_mil
-    
+# 1. 尿素歷史平均耗能計算 (大數據)
+urea_km_l = 170.0 # 預設依據實戰經驗 1格(5L)跑一週(850km)
 if len(urea_with_mil) >= 2:
     try:
-        last_u = urea_with_mil[-1]
-        prev_u = urea_with_mil[-2]
-        km_u_driven = int(last_u["添加當下里程"]) - int(prev_u["添加當下里程"])
-        u_liters = float(last_u.get("公升數", 1))
-        if u_liters > 0:
-            urea_km_l = round(km_u_driven / u_liters, 2)
-            used_urea_vol = driven_since_urea / urea_km_l
-            rem_urea_vol = max(0.0, UREA_TANK_CAPACITY - used_urea_vol)
+        first_u_mil = int(urea_with_mil[0]["添加當下里程"])
+        last_u_mil = int(urea_with_mil[-1]["添加當下里程"])
+        total_u_km = last_u_mil - first_u_mil
+        total_u_liters = sum(float(x.get("公升數", 0)) for x in urea_with_mil[1:])
+        if total_u_liters > 0:
+            urea_km_l = round(total_u_km / total_u_liters, 2)
     except:
         pass
 
+# 2. 尿素連續虛擬存摺推算
+curr_urea_vol = UREA_TANK_CAPACITY  # 假設第一筆紀錄前是滿的
+last_u_mil = int(urea_with_mil[0]["添加當下里程"]) if urea_with_mil else latest_return_mileage
+
+for u_log in urea_with_mil:
+    u_mil = int(u_log["添加當下里程"])
+    add_l = float(u_log.get("公升數", 0))
+    dist = u_mil - last_u_mil
+    
+    if dist > 0: curr_urea_vol -= (dist / urea_km_l)
+    if curr_urea_vol < 0: curr_urea_vol = 0
+    curr_urea_vol += add_l
+    
+    # 強制鎖死物理天花板 20 公升
+    if curr_urea_vol > UREA_TANK_CAPACITY: 
+        curr_urea_vol = UREA_TANK_CAPACITY
+        
+    last_u_mil = u_mil
+
+# 3. 扣除最後一次加尿素後到今日的消耗
+driven_since_urea = latest_return_mileage - last_u_mil
+used_urea_since_last = driven_since_urea / urea_km_l
+rem_urea_vol = max(0.0, curr_urea_vol - used_urea_since_last)
+
+
+# ================= 動態保養預測 =================
 def calculate_service_prediction(logs, target_mileage):
     if len(logs) < 2: return "資料不足"
     current_mileage = int(logs[-1].get("返廠里程", 0))
@@ -200,6 +223,7 @@ def calculate_service_prediction(logs, target_mileage):
 
 est_service_date = calculate_service_prediction(sorted_all_logs, st.session_state.service_target)
 
+# ================= 1:1 原樣 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -328,8 +352,8 @@ st.markdown("""
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
 # ================= 綜合提醒儀表板 (極致壓縮戰術版) =================
-svc_color = "#00c04b" if "月" in est_service_date else "gray"
-svc_text = f"預估 {est_service_date}" if "月" in est_service_date else est_service_date
+svc_color = "#00c04b" if "月" not in est_service_date else "gray"
+svc_text = f"預估 {est_service_date}"
 
 v_alert_num = f"逾期 {abs(days_to_v)} 天" if days_to_v < 0 else f"剩 {days_to_v} 天"
 v_color = "#ff4b4b" if days_to_v < 0 else ("#ffa421" if days_to_v <= 30 else "#00c04b")
@@ -526,7 +550,7 @@ with tab_stats:
             st.metric(label="距上次加尿已跑", value="資料不足")
     with c_u2:
         if urea_km_l > 0:
-            st.metric("近期尿素耗能", f"{urea_km_l} km/L")
+            st.metric("歷史尿素平均耗能", f"{urea_km_l} km/L")
         else:
             st.metric("近期尿素耗能", "資料不足")
             
