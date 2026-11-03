@@ -571,33 +571,40 @@ with tab_stats:
         elif rem_urea_vol < 4.0: st.error(f"🔴 尿素危險：僅剩 {rem_urea_vol:.1f} L！避免抽不到底鎖死，請盡速補加！")
 
     st.divider()
+    
+    # === 新增：共同主控台 (柴油/尿素共用) ===
+    st.markdown("### ⛽💧 補給站登記中心")
+    st.caption("💡 只要在此輸入一次當下儀表板里程，下方的柴油與尿素表單即會自動同步，免重複 Key-in！")
+    
+    shared_station_mil = st.number_input("現在儀表板總里程 (km)", value=latest_return_mileage, step=1, key="shared_mil")
+    
     c_f1, c_f2 = st.columns(2)
     with c_f1:
-        st.markdown("### ⛽ 柴油加油")
+        st.markdown("#### ⛽ 加柴油")
         with st.form("fuel_form"):
             fuel_d = st.date_input("加油日期", SHIFT_DATE, key="fd")
-            fuel_m = st.number_input("加油當下里程", value=latest_return_mileage, step=1)
+            st.text_input("當下里程", value=f"{shared_station_mil} km (已自動同步)", disabled=True)
             fuel_l = st.number_input("公升數 (L)", value=150.0, step=0.1)
             fuel_cost = st.number_input("實付費用 (元)", value=4500, step=10)
             fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"])
-            sub_fuel = st.form_submit_button("紀錄柴油", use_container_width=True)
+            sub_fuel = st.form_submit_button("單獨紀錄柴油", use_container_width=True)
             if sub_fuel:
-                new_fuel_row = [fuel_d.strftime("%Y-%m-%d"), now_time.strftime("%H:%M"), int(fuel_m), float(fuel_l), int(fuel_cost), fuel_station]
+                new_fuel_row = [fuel_d.strftime("%Y-%m-%d"), now_time.strftime("%H:%M"), int(shared_station_mil), float(fuel_l), int(fuel_cost), fuel_station]
                 ws_fuel.append_row(new_fuel_row)
                 st.session_state.sys_msg = "✅ 柴油紀錄已上傳！"
                 st.session_state.sys_msg_type = "success"
                 st.rerun()
 
     with c_f2:
-        st.markdown("### 💧 尿素添加")
+        st.markdown("#### 💧 加尿素")
         with st.form("urea_form"):
             urea_d = st.date_input("添加日期", SHIFT_DATE, key="ud")
-            urea_m = st.number_input("添加當下里程", value=latest_return_mileage, step=1)
+            st.text_input("當下里程", value=f"{shared_station_mil} km (已自動同步)", disabled=True)
             urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
             urea_cost = st.number_input("實付費用 (元)", value=500, step=10)
-            sub_urea = st.form_submit_button("紀錄尿素", use_container_width=True)
+            sub_urea = st.form_submit_button("單獨紀錄尿素", use_container_width=True)
             if sub_urea:
-                new_urea_row = [urea_d.strftime("%Y-%m-%d"), now_time.strftime("%H:%M"), float(urea_l), int(urea_cost), "", int(urea_m)]
+                new_urea_row = [urea_d.strftime("%Y-%m-%d"), now_time.strftime("%H:%M"), float(urea_l), int(urea_cost), "", int(shared_station_mil)]
                 ws_urea.append_row(new_urea_row)
                 st.session_state.sys_msg = "✅ 尿素紀錄已上傳！"
                 st.session_state.sys_msg_type = "success"
