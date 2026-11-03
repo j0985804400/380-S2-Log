@@ -46,11 +46,8 @@ TW_TZ = timezone(timedelta(hours=8))
 now_time = datetime.now(TW_TZ)
 TODAY = now_time.date()
 
-# 🚚 跨夜防呆邏輯：凌晨 00:00 ~ 04:00 打開系統，預設班別日期為「昨天」
-if now_time.hour < 4:
-    SHIFT_DATE = (now_time - timedelta(days=1)).date()
-else:
-    SHIFT_DATE = TODAY
+if now_time.hour < 4: SHIFT_DATE = (now_time - timedelta(days=1)).date()
+else: SHIFT_DATE = TODAY
 
 # ================= Google Sheets 雲端連線設定 =================
 @st.cache_resource
@@ -124,7 +121,6 @@ def load_data():
 
 load_data()
 
-# 跨表全域最新真實里程
 all_recorded_mil = [safe_int(x.get("返廠里程")) for x in st.session_state.daily_logs] + \
                      [safe_int(x.get("加油里程")) for x in st.session_state.fuel_logs] + \
                      [safe_int(x.get("添加當下里程")) for x in st.session_state.urea_logs]
@@ -612,9 +608,9 @@ with tab_stats:
             st.success(f"✅ **預估進站點 (柴油主導)：【 里程 {target_fuel_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
             
             if future_urea_vol >= 8.0:
-                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{target_fuel_mil:,} km** 時，尿素約還剩 **{future_urea_vol:.1f} 公升** (安全)，單純補滿柴油即可！")
+                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將從目前 19.7L 消耗至約 **{future_urea_vol:.1f} 公升** (安全)，單純補滿柴油即可！")
             else:
-                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，尿素約剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
+                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將消耗至剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
                 
         else:
             default_station_mil = target_urea_mil
@@ -622,7 +618,7 @@ with tab_stats:
             future_fuel_vol = vol_after_today - (urea_runnable_km / global_fuel_km_l)
             
             st.error(f"🚨 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
-            st.warning(f"💡 **決策：【以補尿素為主，柴初順便加滿】**\n\n開到 **{target_urea_mil:,} km** 時尿素將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
+            st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n開到 **{target_urea_mil:,} km** 時尿素將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
     else:
         st.info("🔄 智慧預測引擎需要至少 2 筆以上的柴/尿紀錄來運算。")
 
@@ -631,7 +627,7 @@ with tab_stats:
     
     c_dash1, c_dash2 = st.columns(2)
     with c_dash1:
-        st.metric(label="距上次加油已跑", value=f"{used_km_since_fuel} km", delta=f"柴油約剩 {vol_after_today:.1f} L", delta_color="off")
+        st.metric(label="距上次加油已跑", value=f"{used_km_since_fuel} km", delta=f"柴油即時剩餘 {vol_after_today:.1f} L", delta_color="off")
     with c_dash2:
         st.metric("最新一期油耗", f"{global_fuel_km_l} km/L")
         
@@ -645,7 +641,7 @@ with tab_stats:
     c_u1, c_u2 = st.columns(2)
     with c_u1:
         if urea_with_mil:
-            st.metric(label="距上次加尿已跑", value=f"{driven_since_urea} km", delta=f"尿素約剩 {rem_urea_vol:.1f} L", delta_color="off")
+            st.metric(label="距上次加尿已跑", value=f"{driven_since_urea} km", delta=f"尿素即時剩餘 {rem_urea_vol:.1f} L", delta_color="off")
         else:
             st.metric(label="距上次加尿已跑", value="資料不足")
     with c_u2:
@@ -656,9 +652,9 @@ with tab_stats:
             
     if urea_km_l > 1.0:
         if 4.0 <= rem_urea_vol < 8.0:
-            st.warning(f"⚠️ 尿素警戒：僅剩 {rem_urea_vol:.1f} L (逼近 8L 安全防線)")
+            st.warning(f"⚠️ 尿素警戒：即時剩餘 {rem_urea_vol:.1f} L (逼近 8L 安全防線)")
         elif rem_urea_vol < 4.0:
-            st.error(f"🔴 尿素危險：僅剩 {rem_urea_vol:.1f} L！避免抽不到底鎖死，請盡速補加！")
+            st.error(f"🔴 尿素危險：即時剩餘 {rem_urea_vol:.1f} L！避免抽不到底鎖死，請盡速補加！")
 
     st.divider()
     
@@ -677,9 +673,9 @@ with tab_stats:
         chk_fuel = st.checkbox("☑️ 登記柴油", value=True)
         col_f1, col_f2, col_f3 = st.columns(3)
         with col_f1:
-            fuel_l = st.number_input("柴油公升數 (L)", value=150.0, step=0.1)  # 拔除 disabled 鎖定
+            fuel_l = st.number_input("柴油公升數 (L)", value=150.0, step=0.1)
         with col_f2:
-            fuel_cost = st.number_input("柴油實付費用 (元)", value=4500, step=10) # 拔除 disabled 鎖定
+            fuel_cost = st.number_input("柴油實付費用 (元)", value=4500, step=10)
         with col_f3:
             fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"])
             
@@ -687,9 +683,9 @@ with tab_stats:
         chk_urea = st.checkbox("☑️ 登記尿素", value=False)
         col_u1, col_u2 = st.columns(2)
         with col_u1:
-            urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0) # 拔除 disabled 鎖定
+            urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
         with col_u2:
-            urea_cost = st.number_input("尿素費用 (元)", value=500, step=10) # 拔除 disabled 鎖定
+            urea_cost = st.number_input("尿素費用 (元)", value=500, step=10)
             
         submit_station = st.form_submit_button("🚀 一鍵同步儲存 (只會上傳有打勾的項目)", use_container_width=True)
         
@@ -710,7 +706,7 @@ with tab_stats:
                     ws_urea.append_row(new_urea_row)
                     msg_list.append("尿素")
                     
-                st.session_state.sys_msg = f"✅ 【{' ＋ '.join(msg_list)}】補給紀錄已成功寫入雲端！"
+                st.session_state.sys_msg = f"✅ 【{' ＋ '.join(msg_list)}】補給紀錄已成功寫入 Google Sheets！"
                 st.session_state.sys_msg_type = "success"
                 st.rerun()
 
