@@ -494,6 +494,9 @@ with tab_history:
                     st.rerun()
 
 with tab_stats:
+    # 決定預設進站同步里程
+    default_station_mil = latest_return_mileage
+    
     st.subheader("⚠️ 硬體異常防呆監控")
     if historical_km_l > 0 and len(sorted_fuel_logs) >= 3:
         drop_ratio = (historical_km_l - global_fuel_km_l) / historical_km_l
@@ -518,10 +521,13 @@ with tab_stats:
         urea_runnable_km = usable_urea_vol * urea_km_l
         urea_days_left = urea_runnable_km / avg_daily_km
 
+        target_fuel_mil = latest_return_mileage + math.floor(fuel_runnable_km)
+        target_urea_mil = latest_return_mileage + math.floor(urea_runnable_km)
+
         st.markdown("### 🔄 智慧進站策略 (看里程表最準！)")
         
         if urea_runnable_km >= fuel_runnable_km:
-            target_fuel_mil = latest_return_mileage + math.floor(fuel_runnable_km)
+            default_station_mil = target_fuel_mil
             target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(fuel_days_left))
             future_urea_vol = rem_urea_vol - (fuel_runnable_km / urea_km_l)
             
@@ -533,7 +539,7 @@ with tab_stats:
                 st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，尿素約剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
                 
         else:
-            target_urea_mil = latest_return_mileage + math.floor(urea_runnable_km)
+            default_station_mil = target_urea_mil
             target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(urea_days_left))
             future_fuel_vol = vol_after_today - (urea_runnable_km / global_fuel_km_l)
             
@@ -576,9 +582,12 @@ with tab_stats:
     
     # === 新增：共同主控台 (柴油/尿素共用) ===
     st.markdown("### ⛽💧 補給站登記中心")
-    st.caption("💡 只要在此輸入一次當下儀表板里程，下方的柴油與尿素表單即會自動同步，免重複 Key-in！")
+    if default_station_mil > latest_return_mileage:
+        st.caption(f"🤖 **神預測同步**：AI 已自動預載「預估進站里程」，您只需微調最後幾碼即可！")
+    else:
+        st.caption("💡 只要在此輸入一次當下儀表板里程，下方的柴油與尿素表單即會自動同步！")
     
-    shared_station_mil = st.number_input("現在儀表板總里程 (km)", value=latest_return_mileage, step=1, key="shared_mil")
+    shared_station_mil = st.number_input("現在儀表板總里程 (km)", value=int(default_station_mil), step=1, key="shared_mil")
     
     c_f1, c_f2 = st.columns(2)
     with c_f1:
