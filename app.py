@@ -19,7 +19,16 @@ DOC_CODE = "4-33-DC0007B"
 FORM_NAME = "公務車輛行車紀錄表 Rev.1"
 UREA_TANK_CAPACITY = 20.0  
 TW_TZ = timezone(timedelta(hours=8))
-TODAY = datetime.now(TW_TZ).date()
+
+# 取得當下時間與真實日期
+now_time = datetime.now(TW_TZ)
+TODAY = now_time.date()
+
+# 🚚 跨夜防呆邏輯：凌晨 00:00 ~ 04:00 打開系統，預設班別日期為「昨天」
+if now_time.hour < 4:
+    SHIFT_DATE = (now_time - timedelta(days=1)).date()
+else:
+    SHIFT_DATE = TODAY
 
 # ================= Google Sheets 雲端連線設定 =================
 @st.cache_resource
@@ -99,7 +108,7 @@ latest_log = sorted_all_logs[-1]
 latest_return_mileage = int(latest_log["返廠里程"])
 rem_service = st.session_state.service_target - latest_return_mileage
 
-# ================= 柴油消耗運算 (AI動態上限 + 存摺記帳) =================
+# ================= 柴油消耗運算 =================
 sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: int(x.get("加油里程", 0)))
 latest_fuel_mileage = int(sorted_fuel_logs[-1]["加油里程"])
 
@@ -144,12 +153,10 @@ def get_avg_daily_km(logs):
 
 avg_daily_km = get_avg_daily_km(sorted_all_logs)
 
-# AI 油桶上限
 max_liters_added = max([float(f.get("公升數", 0)) for f in sorted_fuel_logs]) if sorted_fuel_logs else 130.0
 learned_tank_cap = float(math.ceil(max_liters_added / 10.0) * 10)
 tank_cap = max(base_tank_capacity, learned_tank_cap)
 
-# 柴油連續虛擬油箱推算
 curr_vol = tank_cap  
 last_f_mil = int(sorted_fuel_logs[0].get("加油里程", 0)) if sorted_fuel_logs else latest_return_mileage
 for f_log in sorted_fuel_logs:
@@ -166,14 +173,12 @@ used_km_since_fuel = latest_return_mileage - latest_fuel_mileage
 used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
 vol_after_today = max(0, curr_vol - used_vol_since_fuel)
 
-
-# ================= 尿素消耗運算 (升級：連續存摺記帳法) =================
+# ================= 尿素消耗運算 =================
 sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
 urea_with_mil = [u for u in sorted_urea if "添加當下里程" in u and str(u["添加當下里程"]).isdigit()]
 urea_with_mil = sorted(urea_with_mil, key=lambda x: int(x["添加當下里程"]))
 
-# 1. 尿素歷史平均耗能計算 (大數據)
-urea_km_l = 170.0 # 預設依據實戰經驗 1格(5L)跑一週(850km)
+urea_km_l = 170.0 
 if len(urea_with_mil) >= 2:
     try:
         first_u_mil = int(urea_with_mil[0]["添加當下里程"])
@@ -185,8 +190,7 @@ if len(urea_with_mil) >= 2:
     except:
         pass
 
-# 2. 尿素連續虛擬存摺推算
-curr_urea_vol = UREA_TANK_CAPACITY  # 假設第一筆紀錄前是滿的
+curr_urea_vol = UREA_TANK_CAPACITY  
 last_u_mil = int(urea_with_mil[0]["添加當下里程"]) if urea_with_mil else latest_return_mileage
 
 for u_log in urea_with_mil:
@@ -198,19 +202,15 @@ for u_log in urea_with_mil:
     if curr_urea_vol < 0: curr_urea_vol = 0
     curr_urea_vol += add_l
     
-    # 強制鎖死物理天花板 20 公升
     if curr_urea_vol > UREA_TANK_CAPACITY: 
         curr_urea_vol = UREA_TANK_CAPACITY
         
     last_u_mil = u_mil
 
-# 3. 扣除最後一次加尿素後到今日的消耗
 driven_since_urea = latest_return_mileage - last_u_mil
 used_urea_since_last = driven_since_urea / urea_km_l
 rem_urea_vol = max(0.0, curr_urea_vol - used_urea_since_last)
 
-
-# ================= 動態保養預測 =================
 def calculate_service_prediction(logs, target_mileage):
     if len(logs) < 2: return "資料不足"
     current_mileage = int(logs[-1].get("返廠里程", 0))
@@ -223,118 +223,143 @@ def calculate_service_prediction(logs, target_mileage):
 
 est_service_date = calculate_service_prediction(sorted_all_logs, st.session_state.service_target)
 
-# ================= 1:1 原樣 A4 報表生成 =================
+# ================= 1:1 原樣 A4 報表生成 (極致排版更新) =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = f"{month}月行車紀錄"
-    ws.views.sheetView[0].showGridLines = True
+    ws.views.sheetView[0].showGridLines = False # 關閉網格線，視覺更乾淨
+    
     font_family = "Microsoft JhengHei"
-    font_bold_md = Font(name=font_family, size=10, bold=True)
-    font_regular = Font(name=font_family, size=9.5)
-    font_header_sub = Font(name=font_family, size=8.5)
+    font_bold_md = Font(name=font_family, size=11, bold=True)
+    font_regular = Font(name=font_family, size=11)
+    font_header_sub = Font(name=font_family, size=10)
+    
     thin = Side(border_style="thin", color="000000")
     border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
     align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     align_right = Alignment(horizontal="right", vertical="center")
     align_left = Alignment(horizontal="left", vertical="center")
-    align_center_no_wrap = Alignment(horizontal="center", vertical="center", wrap_text=False)
+    
+    # 設定極窄邊距，徹底利用 A4 空間
+    ws.page_margins.left = 0.25
+    ws.page_margins.right = 0.25
+    ws.page_margins.top = 0.5
+    ws.page_margins.bottom = 0.5
 
+    # 第一列
     ws.merge_cells("A1:G1")
-    rich_text = CellRichText(TextBlock(InlineFont(b=False, sz=12, rFont=font_family), 'KT.T. '), TextBlock(InlineFont(i=True, sz=8, rFont=font_family), 'Pro Clean Tech   '), TextBlock(InlineFont(b=False, sz=12, rFont=font_family), '科治新技股份有限公司 標準作業表格'))
+    rich_text = CellRichText(
+        TextBlock(InlineFont(b=False, sz=12, rFont=font_family), 'KT.T. '), 
+        TextBlock(InlineFont(i=True, sz=9, rFont=font_family), 'Pro Clean Tech   '), 
+        TextBlock(InlineFont(b=False, sz=12, rFont=font_family), '科治新技股份有限公司 標準作業表格')
+    )
     ws["A1"] = rich_text
-    ws["A1"].alignment = align_center_no_wrap
+    ws["A1"].alignment = align_center
     ws.merge_cells("H1:I1")
     ws["H1"] = "頁次："
     ws["H1"].font = font_header_sub
     ws["H1"].alignment = align_left
+    
+    # 第二列
     ws.merge_cells("A2:B2")
     ws["A2"] = "表格名稱"
-    ws["A2"].font = Font(name=font_family, size=11)
+    ws["A2"].font = Font(name=font_family, size=12)
     ws["A2"].alignment = align_center
     ws.merge_cells("C2:G2")
     ws["C2"] = "公務車輛行車紀錄表 Rev.1"
-    ws["C2"].font = Font(name=font_family, size=11)
-    ws["C2"].alignment = align_center_no_wrap
+    ws["C2"].font = Font(name=font_family, size=12)
+    ws["C2"].alignment = align_center
     ws.merge_cells("H2:I2")
     ws["H2"] = f"編號：{DOC_CODE}"
-    ws["H2"].font = Font(name=font_family, size=9)
+    ws["H2"].font = Font(name=font_family, size=10)
     ws["H2"].alignment = align_left
 
-    for r in range(1, 3):
-        for c in range(1, 10): ws.cell(row=r, column=c).border = border_all
-
+    # 第三列 (無縫合併，還原實體排版)
     roc_year = year - 1911
-    ws.row_dimensions[3].height = 24
-    ws["A3"] = "行車\n日誌"
+    ws.merge_cells("A3:B3")
+    ws["A3"] = "行車日誌"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_center
-    ws.merge_cells("B3:C3")
-    ws["B3"] = f"月份： {roc_year} 年 {month} 月"
-    ws["B3"].font = font_bold_md
-    ws["B3"].alignment = align_center
-    ws.merge_cells("D3:E3")
-    ws["D3"] = f"車牌號碼： {DEFAULT_PLATE}"
-    ws["D3"].font = font_bold_md
-    ws["D3"].alignment = align_center
-    ws.merge_cells("F3:I3")
-    ws["F3"] = f"保管人： {DEFAULT_KEEPER}"
-    ws["F3"].font = font_bold_md
-    ws["F3"].alignment = align_center
+    
+    ws.merge_cells("C3:I3")
+    ws["C3"] = f"月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
+    ws["C3"].font = font_bold_md
+    ws["C3"].alignment = align_center
 
-    for c in range(1, 10): ws.cell(row=3, column=c).border = border_all
-
+    # 第四列 (標題)
     headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
-    ws.row_dimensions[4].height = 26
     for col_idx, text in enumerate(headers, start=1):
         cell = ws.cell(row=4, column=col_idx, value=text)
         cell.font = font_bold_md
         cell.alignment = align_center
-        cell.border = border_all
-        cell.fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+
+    # 表頭高度與框線 (1~4列)
+    for r in range(1, 5):
+        ws.row_dimensions[r].height = 28 # 加高表頭
+        for c in range(1, 10): 
+            ws.cell(row=r, column=c).border = border_all
 
     prefix = f"{year:04d}-{month:02d}"
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
     m_logs = sorted(m_logs, key=lambda x: str(x.get("日期", "")))
     f_map = {str(fl["加油日期"]): fl for fl in st.session_state.fuel_logs if str(fl.get("加油日期", "")).startswith(prefix)}
 
+    # 填入 31 列資料行
     start_row = 5
     for i in range(31):
         curr_row = start_row + i
-        ws.row_dimensions[curr_row].height = 20
+        ws.row_dimensions[curr_row].height = 24.5 # 爆改高度，完美撐滿 A4
+        
         if i < len(m_logs):
             log = m_logs[i]
-            day_num = int(log["日期"].split("-")[2])
+            try:
+                day_num = int(log["日期"].split("-")[2])
+            except:
+                day_num = ""
+                
             ws.cell(row=curr_row, column=1, value=str(day_num)).alignment = align_center
-            ws.cell(row=curr_row, column=2, value=log["使用人"]).alignment = align_center
-            ws.cell(row=curr_row, column=3, value=log["目的地"]).alignment = align_center
-            ws.cell(row=curr_row, column=4, value=log["出發時間"]).alignment = align_center
-            ws.cell(row=curr_row, column=5, value=log["出發里程"]).alignment = align_right
-            ws.cell(row=curr_row, column=6, value=log["返廠時間"]).alignment = align_center
-            ws.cell(row=curr_row, column=7, value=log["返廠里程"]).alignment = align_right
+            ws.cell(row=curr_row, column=2, value=log.get("使用人", "")).alignment = align_center
+            ws.cell(row=curr_row, column=3, value=log.get("目的地", "")).alignment = align_center
+            ws.cell(row=curr_row, column=4, value=log.get("出發時間", "")).alignment = align_center
+            ws.cell(row=curr_row, column=5, value=log.get("出發里程", "")).alignment = align_right
+            ws.cell(row=curr_row, column=6, value=log.get("返廠時間", "")).alignment = align_center
+            ws.cell(row=curr_row, column=7, value=log.get("返廠里程", "")).alignment = align_right
+            
             if log["日期"] in f_map:
                 fl = f_map[log["日期"]]
-                ws.cell(row=curr_row, column=8, value=fl["加油里程"]).alignment = align_right
-                ws.cell(row=curr_row, column=9, value=fl["加油費用"]).alignment = align_right
-        else:
-            for c in range(1, 10): ws.cell(row=curr_row, column=c, value="")
-
+                ws.cell(row=curr_row, column=8, value=fl.get("加油里程", "")).alignment = align_right
+                ws.cell(row=curr_row, column=9, value=fl.get("加油費用", "")).alignment = align_right
+        
         for c in range(1, 10):
             cell = ws.cell(row=curr_row, column=c)
-            cell.font = font_regular
+            if not cell.font:
+                cell.font = font_regular
             cell.border = border_all
-            if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float)):
+            if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    col_widths = {"A": 7.5, "B": 9, "C": 10, "D": 10, "E": 12, "F": 10, "G": 12, "H": 12, "I": 11}
-    for col, width in col_widths.items(): ws.column_dimensions[col].width = width
+    # 欄寬完美比例調校 (還原手寫實體單)
+    col_widths = {
+        "A": 4.5,   # 日期(極窄)
+        "B": 7.5,   # 使用人
+        "C": 14.0,  # 目的地(加寬)
+        "D": 9.5,   # 出發時間
+        "E": 12.5,  # 出發里程
+        "F": 9.5,   # 返廠時間
+        "G": 12.5,  # 返廠里程
+        "H": 12.5,  # 加油里程
+        "I": 10.5   # 加油費用
+    }
+    for col, width in col_widths.items(): 
+        ws.column_dimensions[col].width = width
 
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
     ws.page_setup.fitToPage = True
     ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToHeight = 1 # 強制縮放鎖定 1 頁
+    
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
@@ -390,7 +415,7 @@ tab_daily, tab_history, tab_stats, tab_export, tab_settings = st.tabs(["📝 登
 with tab_daily:
     st.subheader("每日返廠單次結算")
     with st.form("quick_daily_form"):
-        f_date = st.date_input("日期", datetime.now(TW_TZ))
+        f_date = st.date_input("日期", SHIFT_DATE)
         f_user = st.text_input("使用人", value=DEFAULT_USER)
         f_dest_select = st.selectbox("目的地 (點選快捷)", st.session_state.destinations)
         f_dest_custom = st.text_input("或輸入新目的地 (選填)")
@@ -400,7 +425,7 @@ with tab_daily:
             f_start_time = st.text_input("出發時間", value="07:20")
             f_start_mil = st.number_input("出發里程 (鎖定前次)", value=latest_return_mileage, disabled=True)
         with col_t2:
-            f_ret_time = st.text_input("返廠時間", value=datetime.now(TW_TZ).strftime("%H:%M"))
+            f_ret_time = st.text_input("返廠時間", value=now_time.strftime("%H:%M"))
             def_return = latest_return_mileage + 23 if "順益" in f_dest_select else latest_return_mileage + 170
             f_ret_mil = st.number_input("返廠里程 (請看儀表板輸入)", value=def_return, step=1)
 
@@ -563,14 +588,14 @@ with tab_stats:
     with c_f1:
         st.markdown("### ⛽ 柴油加油")
         with st.form("fuel_form"):
-            fuel_d = st.date_input("加油日期", datetime.now(TW_TZ), key="fd")
+            fuel_d = st.date_input("加油日期", SHIFT_DATE, key="fd")
             fuel_m = st.number_input("加油當下里程", value=latest_return_mileage, step=1)
             fuel_l = st.number_input("公升數 (L)", value=150.0, step=0.1)
             fuel_cost = st.number_input("實付費用 (元)", value=4500, step=10)
             fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"])
             sub_fuel = st.form_submit_button("紀錄柴油", use_container_width=True)
             if sub_fuel:
-                new_fuel_row = [fuel_d.strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"), int(fuel_m), float(fuel_l), int(fuel_cost), fuel_station]
+                new_fuel_row = [fuel_d.strftime("%Y-%m-%d"), now_time.strftime("%H:%M"), int(fuel_m), float(fuel_l), int(fuel_cost), fuel_station]
                 ws_fuel.append_row(new_fuel_row)
                 st.session_state.sys_msg = "✅ 柴油紀錄已上傳！"
                 st.session_state.sys_msg_type = "success"
@@ -579,13 +604,13 @@ with tab_stats:
     with c_f2:
         st.markdown("### 💧 尿素添加")
         with st.form("urea_form"):
-            urea_d = st.date_input("添加日期", datetime.now(TW_TZ), key="ud")
+            urea_d = st.date_input("添加日期", SHIFT_DATE, key="ud")
             urea_m = st.number_input("添加當下里程", value=latest_return_mileage, step=1)
             urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
             urea_cost = st.number_input("實付費用 (元)", value=500, step=10)
             sub_urea = st.form_submit_button("紀錄尿素", use_container_width=True)
             if sub_urea:
-                new_urea_row = [urea_d.strftime("%Y-%m-%d"), datetime.now(TW_TZ).strftime("%H:%M"), float(urea_l), int(urea_cost), "", int(urea_m)]
+                new_urea_row = [urea_d.strftime("%Y-%m-%d"), now_time.strftime("%H:%M"), float(urea_l), int(urea_cost), "", int(urea_m)]
                 ws_urea.append_row(new_urea_row)
                 st.session_state.sys_msg = "✅ 尿素紀錄已上傳！"
                 st.session_state.sys_msg_type = "success"
