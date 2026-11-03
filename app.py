@@ -217,7 +217,7 @@ def calculate_service_prediction(target_mileage):
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
 
-# ================= 1:1 終極還原 A4 報表生成 =================
+# ================= 1:1 終極物理換算 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -232,15 +232,15 @@ def generate_kertz_excel(year: int, month: int):
     thin = Side(border_style="thin", color="000000")
     border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
     
-    # 關閉自動換行，保證文字絕對橫排
     align_center = Alignment(horizontal="center", vertical="center", wrap_text=False)
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
-    ws.page_margins.left = 0.25
-    ws.page_margins.right = 0.25
-    ws.page_margins.top = 0.5
+    # 【關鍵物理換算】上方2公分(~0.8吋)，左右1公分(~0.4吋)
+    ws.page_margins.top = 0.8
     ws.page_margins.bottom = 0.5
+    ws.page_margins.left = 0.4
+    ws.page_margins.right = 0.4
 
     ws.merge_cells("A1:G1")
     rich_text = CellRichText(
@@ -268,14 +268,12 @@ def generate_kertz_excel(year: int, month: int):
     ws["H2"].font = Font(name=font_family, size=10)
     ws["H2"].alignment = align_left
 
-    # === 終極修正：A3 到 I3 直接大一統合併，絕對不再有內線 ===
     roc_year = year - 1911
     ws.merge_cells("A3:I3")
     ws["A3"] = f"行車日誌               月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_left 
 
-    # === 標題橫排：不切字，回歸單純橫列 ===
     headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
     for col_idx, text in enumerate(headers, start=1):
         cell = ws.cell(row=4, column=col_idx, value=text)
@@ -322,17 +320,16 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    # === 重新調配物理欄寬：完美平衡後方欄位「均寬」視覺 ===
     col_widths = {
-        "A": 5.0,   # 日期
-        "B": 8.0,   # 使用人
-        "C": 14.0,  # 目的地
-        "D": 11.0,  # 出發時間
-        "E": 11.5,  # 出發里程
-        "F": 11.0,  # 返廠時間
-        "G": 11.5,  # 返廠里程
-        "H": 11.5,  # 加油里程
-        "I": 11.0   # 加油費用
+        "A": 5.0,   
+        "B": 8.0,   
+        "C": 14.0,  
+        "D": 11.0,  
+        "E": 11.5,  
+        "F": 11.0,  
+        "G": 11.5,  
+        "H": 11.5,  
+        "I": 11.0   
     }
     for col, width in col_widths.items(): ws.column_dimensions[col].width = width
 
