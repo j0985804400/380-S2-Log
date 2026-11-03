@@ -3,9 +3,7 @@ import math
 from datetime import datetime, timedelta, timezone
 import io
 import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.cell.rich_text import TextBlock, CellRichText
-from openpyxl.cell.text import InlineFont
+from openpyxl.styles import Alignment, Border, Font, Side
 import pandas as pd
 import streamlit as st
 import gspread
@@ -113,8 +111,8 @@ def load_data():
 load_data()
 
 all_recorded_mil = [safe_int(x.get("返廠里程")) for x in st.session_state.daily_logs] + \
-                     [safe_int(x.get("加油里程")) for x in st.session_state.fuel_logs] + \
-                     [safe_int(x.get("添加當下里程")) for x in st.session_state.urea_logs]
+                   [safe_int(x.get("加油里程")) for x in st.session_state.fuel_logs] + \
+                   [safe_int(x.get("添加當下里程")) for x in st.session_state.urea_logs]
 latest_return_mileage = max(all_recorded_mil) if all_recorded_mil else 615215
 rem_service = st.session_state.service_target - latest_return_mileage
 
@@ -236,34 +234,35 @@ def generate_kertz_excel(year: int, month: int):
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
-    # 物理極限還原：上方約2公分(~0.8吋)，左右約1公分(~0.4吋)
+    # 精準實體紙本邊距：上方約2cm (~0.8吋)，左右約1cm (~0.4吋)
     ws.page_margins.top = 0.8
     ws.page_margins.bottom = 0.5
     ws.page_margins.left = 0.4
     ws.page_margins.right = 0.4
 
-    # 專業防呆畫框引擎：只畫外框，徹底根除手機版Excel亂加內線的問題
-    def style_merged_range(ws, start_col, start_row, end_col, end_row):
-        for r in range(start_row, end_row + 1):
-            for c in range(start_col, end_col + 1):
-                top = thin if r == start_row else None
-                bottom = thin if r == end_row else None
-                left = thin if c == start_col else None
-                right = thin if c == end_col else None
-                ws.cell(row=r, column=c).border = Border(top=top, bottom=bottom, left=left, right=right)
+    def apply_outer_border(ws, r_start, c_start, r_end, c_end):
+        for r in range(r_start, r_end + 1):
+            for c in range(c_start, c_end + 1):
+                top_side = thin if r == r_start else None
+                bot_side = thin if r == r_end else None
+                left_side = thin if c == c_start else None
+                right_side = thin if c == c_end else None
+                ws.cell(row=r, column=c).border = Border(top=top_side, bottom=bot_side, left=left_side, right=right_side)
 
+    # 1. 執行標準區塊合併
     merges = [
         (1, 1, 1, 7), # A1:G1
         (1, 8, 1, 9), # H1:I1
         (2, 1, 2, 2), # A2:B2
         (2, 3, 2, 7), # C2:G2
         (2, 8, 2, 9), # H2:I2
-        (3, 1, 3, 9), # A3:I3 (大一統合併，沒有內線干擾)
+        (3, 1, 3, 9), # A3:I3
     ]
-    for sr, sc, er, ec in merges:
-        ws.merge_cells(start_row=sr, start_column=sc, end_row=er, end_column=ec)
-        style_merged_range(ws, sc, sr, ec, er)
+    for r1, c1, r2, c2 in merges:
+        ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
+        apply_outer_border(ws, r1, c1, r2, c2)
 
+    # 第 1 列
     ws["A1"] = "KT.T. Pro Clean Tech  科治新技股份有限公司 標準作業表格"
     ws["A1"].font = font_bold_md
     ws["A1"].alignment = align_center
@@ -272,6 +271,7 @@ def generate_kertz_excel(year: int, month: int):
     ws["H1"].font = font_header_sub
     ws["H1"].alignment = align_left
     
+    # 第 2 列
     ws["A2"] = "表格名稱"
     ws["A2"].font = Font(name=font_family, size=12)
     ws["A2"].alignment = align_center
@@ -284,11 +284,13 @@ def generate_kertz_excel(year: int, month: int):
     ws["H2"].font = Font(name=font_family, size=10)
     ws["H2"].alignment = align_left
 
+    # 第 3 列：大通鋪橫排
     roc_year = year - 1911
-    ws["A3"] = f"行車日誌               月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
+    ws["A3"] = f"  行車日誌               月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_left 
 
+    # 第 4 列：標題置中
     headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
     for col_idx, text in enumerate(headers, start=1):
         cell = ws.cell(row=4, column=col_idx, value=text)
@@ -304,6 +306,7 @@ def generate_kertz_excel(year: int, month: int):
     m_logs = sorted(m_logs, key=lambda x: str(x.get("日期", "")))
     f_map = {str(fl["加油日期"]): fl for fl in st.session_state.fuel_logs if str(fl.get("加油日期", "")).startswith(prefix)}
 
+    # 資料填寫（31列滿版）
     start_row = 5
     for i in range(31):
         curr_row = start_row + i
@@ -334,12 +337,11 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    # ================= 終極救贖：真實比例欄寬重置 =================
-    # 完全顛倒B欄與C欄的寬度，B欄極寬，C欄縮窄
+    # ================= 嚴格實體單比例：B欄寬、C欄窄 =================
     col_widths = {
-        "A": 5.0,   # 日期
-        "B": 15.0,  # 使用人 (這欄超級寬，完全對齊實體單！)
-        "C": 8.5,   # 目的地 (這欄才是窄的！)
+        "A": 5.0,   # 日期（極窄）
+        "B": 15.0,  # 使用人（寬，符合簽名蓋章空間）
+        "C": 8.5,   # 目的地（窄）
         "D": 10.5,  # 出發時間
         "E": 12.0,  # 出發里程數
         "F": 10.5,  # 返廠時間
@@ -347,7 +349,8 @@ def generate_kertz_excel(year: int, month: int):
         "H": 12.0,  # 加油里程數
         "I": 10.5   # 加油費用
     }
-    for col, width in col_widths.items(): ws.column_dimensions[col].width = width
+    for col, width in col_widths.items(): 
+        ws.column_dimensions[col].width = width
 
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
