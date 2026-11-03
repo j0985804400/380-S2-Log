@@ -14,25 +14,19 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ================= 系統安全轉型防呆函數 =================
 def safe_int(val, default=0):
     try:
-        if val is None or val == "":
-            return default
+        if val is None or val == "": return default
         return int(float(val))
-    except:
-        return default
+    except: return default
 
 def safe_float(val, default=0.0):
     try:
-        if val is None or val == "":
-            return default
+        if val is None or val == "": return default
         return float(val)
-    except:
-        return default
+    except: return default
 
 def parse_date_safe(date_str, default_date):
-    try:
-        return datetime.strptime(str(date_str).strip(), "%Y-%m-%d").date()
-    except:
-        return default_date
+    try: return datetime.strptime(str(date_str).strip(), "%Y-%m-%d").date()
+    except: return default_date
 
 # ================= 系統固定參數與時區設定 =================
 DEFAULT_PLATE = "380-S2"
@@ -106,12 +100,9 @@ def load_data():
         st.error(f"雲端資料讀取失敗: {e}")
         return
 
-    if not daily_data:
-        daily_data = [{"日期": "2026-10-31", "使用人": "劉嘉舜", "目的地": "美光", "出發時間": "07:20", "出發里程": 615049, "返廠時間": "18:30", "返廠里程": 615215, "備註": "系統基準"}]
-    if not fuel_data:
-        fuel_data = [{"加油日期": "2026-10-30", "加油時間": "18:40", "加油里程": 614997, "公升數": 130.0, "加油費用": 3816, "加油站名": "中油苗栗站"}]
-    if not urea_data:
-        urea_data = [{"添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加", "添加當下里程": 614997}]
+    if not daily_data: daily_data = [{"日期": "2026-10-31", "使用人": "劉嘉舜", "目的地": "美光", "出發時間": "07:20", "出發里程": 615049, "返廠時間": "18:30", "返廠里程": 615215, "備註": "系統基準"}]
+    if not fuel_data: fuel_data = [{"加油日期": "2026-10-30", "加油時間": "18:40", "加油里程": 614997, "公升數": 130.0, "加油費用": 3816, "加油站名": "中油苗栗站"}]
+    if not urea_data: urea_data = [{"添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加", "添加當下里程": 614997}]
         
     st.session_state.daily_logs = daily_data
     st.session_state.fuel_logs = fuel_data
@@ -137,8 +128,7 @@ if len(sorted_fuel_logs) >= 2:
     prev_f = sorted_fuel_logs[-2]
     km_driven = safe_int(last_f.get("加油里程")) - safe_int(prev_f.get("加油里程"))
     liters = safe_float(last_f.get("公升數"))
-    if liters > 0 and km_driven > 0:
-        global_fuel_km_l = round(km_driven / liters, 2)
+    if liters > 0 and km_driven > 0: global_fuel_km_l = round(km_driven / liters, 2)
 global_fuel_km_l = max(0.1, global_fuel_km_l)
 
 historical_km_l = global_fuel_km_l
@@ -163,12 +153,10 @@ def get_avg_daily_km(logs):
                 mileage_diff = safe_int(recent_logs[-1]["返廠里程"]) - safe_int(recent_logs[0]["出發里程"])
                 avg = mileage_diff / days_diff
                 return max(1.0, avg)
-        except:
-            pass
+        except: pass
     return 170.0 
 
 avg_daily_km = get_avg_daily_km(st.session_state.daily_logs)
-
 max_liters_added = max([safe_float(f.get("公升數")) for f in sorted_fuel_logs]) if sorted_fuel_logs else 130.0
 learned_tank_cap = float(math.ceil(max_liters_added / 10.0) * 10)
 tank_cap = max(base_tank_capacity, learned_tank_cap)
@@ -179,13 +167,10 @@ for f_log in sorted_fuel_logs:
     f_mil = safe_int(f_log.get("加油里程"))
     add_l = safe_float(f_log.get("公升數"))
     dist = f_mil - last_f_mil
-    if dist > 0:
-        curr_vol -= (dist / global_fuel_km_l)
-    if curr_vol < 0:
-        curr_vol = 0
+    if dist > 0: curr_vol -= (dist / global_fuel_km_l)
+    if curr_vol < 0: curr_vol = 0
     curr_vol += add_l
-    if curr_vol > tank_cap:
-        curr_vol = tank_cap
+    if curr_vol > tank_cap: curr_vol = tank_cap
     last_f_mil = f_mil
 
 used_km_since_fuel = max(0, latest_return_mileage - latest_fuel_mileage)
@@ -203,8 +188,7 @@ if len(urea_with_mil) >= 2:
     last_u_mil = safe_int(urea_with_mil[-1]["添加當下里程"])
     total_u_km = last_u_mil - first_u_mil
     total_u_liters = sum(safe_float(x.get("公升數")) for x in urea_with_mil[1:])
-    if total_u_liters > 0 and total_u_km > 0:
-        urea_km_l = round(total_u_km / total_u_liters, 2)
+    if total_u_liters > 0 and total_u_km > 0: urea_km_l = round(total_u_km / total_u_liters, 2)
 urea_km_l = max(1.0, urea_km_l)
 
 curr_urea_vol = UREA_TANK_CAPACITY  
@@ -214,13 +198,10 @@ for u_log in urea_with_mil:
     u_mil = safe_int(u_log["添加當下里程"])
     add_l = safe_float(u_log.get("公升數"))
     dist = u_mil - last_u_mil
-    if dist > 0:
-        curr_urea_vol -= (dist / urea_km_l)
-    if curr_urea_vol < 0:
-        curr_urea_vol = 0
+    if dist > 0: curr_urea_vol -= (dist / urea_km_l)
+    if curr_urea_vol < 0: curr_urea_vol = 0
     curr_urea_vol += add_l
-    if curr_urea_vol > UREA_TANK_CAPACITY:
-        curr_urea_vol = UREA_TANK_CAPACITY
+    if curr_urea_vol > UREA_TANK_CAPACITY: curr_urea_vol = UREA_TANK_CAPACITY
     last_u_mil = u_mil
 
 driven_since_urea = max(0, latest_return_mileage - last_u_mil)
@@ -229,15 +210,14 @@ rem_urea_vol = max(0.0, curr_urea_vol - used_urea_since_last)
 
 def calculate_service_prediction(target_mileage):
     km_remaining = target_mileage - latest_return_mileage
-    if km_remaining <= 0:
-        return "已達保養里程"
+    if km_remaining <= 0: return "已達保養里程"
     days_remaining = int(km_remaining / avg_daily_km)
     est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
     return est_date.strftime("%m/%d")
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
 
-# ================= 1:1 原樣 A4 報表生成（像素級完美還原） =================
+# ================= 1:1 終極還原 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -251,9 +231,11 @@ def generate_kertz_excel(year: int, month: int):
     
     thin = Side(border_style="thin", color="000000")
     border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
-    align_center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    align_right = Alignment(horizontal="right", vertical="center")
-    align_left = Alignment(horizontal="left", vertical="center")
+    
+    # 拔除 wrap_text，保證所有文字絕對橫排到底，不折行、不切字
+    align_center = Alignment(horizontal="center", vertical="center", wrap_text=False)
+    align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
+    align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
     ws.page_margins.left = 0.25
     ws.page_margins.right = 0.25
@@ -286,34 +268,25 @@ def generate_kertz_excel(year: int, month: int):
     ws["H2"].font = Font(name=font_family, size=10)
     ws["H2"].alignment = align_left
 
+    # === 徹底修正第三列：A3 到 I3 變成一個完整的長條大格 ===
     roc_year = year - 1911
-    
-    # 第三列：行車日誌 (合併 A3:B3)
-    ws.merge_cells("A3:B3")
-    ws["A3"] = "行車日誌"
+    ws.merge_cells("A3:I3")
+    ws["A3"] = f"行車日誌               月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
     ws["A3"].font = font_bold_md
-    ws["A3"].alignment = align_center
-    
-    ws.merge_cells("C3:I3")
-    ws["C3"] = f"月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
-    ws["C3"].font = font_bold_md
-    ws["C3"].alignment = align_center
+    ws["A3"].alignment = align_left # 靠左對齊，用空白隔開
 
-    # 第四列：表頭標題 (「日期」強制換行直排顯示)
-    headers = ["日\n期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
+    # === 第四列：橫排標題，絕對不折行 ===
+    headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
     for col_idx, text in enumerate(headers, start=1):
         cell = ws.cell(row=4, column=col_idx, value=text)
         cell.font = font_bold_md
-        cell.alignment = align_center # wrap_text 讓日/期上下排列
+        cell.alignment = align_center 
 
+    # 畫框線 (A3:I3 合併後只有一個大外框，內部絕對沒有亂七八糟的隔線)
     for r in range(1, 5):
         ws.row_dimensions[r].height = 28
         for c in range(1, 10):
             ws.cell(row=r, column=c).border = border_all
-    
-    # 精準消除 A3與B3 之間的視覺隔線，還原實體單風格
-    ws["A3"].border = Border(top=thin, left=thin, bottom=thin)
-    ws["B3"].border = Border(top=thin, right=thin, bottom=thin)
 
     prefix = f"{year:04d}-{month:02d}"
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
@@ -327,10 +300,8 @@ def generate_kertz_excel(year: int, month: int):
         
         if i < len(m_logs):
             log = m_logs[i]
-            try:
-                day_num = int(log["日期"].split("-")[2])
-            except:
-                day_num = ""
+            try: day_num = int(log["日期"].split("-")[2])
+            except: day_num = ""
                 
             ws.cell(row=curr_row, column=1, value=str(day_num)).alignment = align_center
             ws.cell(row=curr_row, column=2, value=str(log.get("使用人", ""))).alignment = align_center
@@ -347,15 +318,24 @@ def generate_kertz_excel(year: int, month: int):
         
         for c in range(1, 10):
             cell = ws.cell(row=curr_row, column=c)
-            if not cell.font:
-                cell.font = font_regular
+            if not cell.font: cell.font = font_regular
             cell.border = border_all
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    col_widths = {"A": 4.5, "B": 7.5, "C": 14.0, "D": 9.5, "E": 12.5, "F": 9.5, "G": 12.5, "H": 12.5, "I": 10.5}
-    for col, width in col_widths.items():
-        ws.column_dimensions[col].width = width
+    # === 重新調配物理欄寬：讓「出發時間/返廠時間」有足夠空間橫排，不被擠成兩行 ===
+    col_widths = {
+        "A": 5.5,   # 日期
+        "B": 8.5,   # 使用人
+        "C": 13.0,  # 目的地
+        "D": 10.5,  # 出發時間
+        "E": 12.0,  # 出發里程
+        "F": 10.5,  # 返廠時間
+        "G": 12.0,  # 返廠里程
+        "H": 12.0,  # 加油里程
+        "I": 10.0   # 加油費用
+    }
+    for col, width in col_widths.items(): ws.column_dimensions[col].width = width
 
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
@@ -408,10 +388,8 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 if "sys_msg" in st.session_state:
-    if st.session_state.sys_msg_type == "warning":
-        st.warning(st.session_state.sys_msg)
-    else:
-        st.success(st.session_state.sys_msg)
+    if st.session_state.sys_msg_type == "warning": st.warning(st.session_state.sys_msg)
+    else: st.success(st.session_state.sys_msg)
     del st.session_state.sys_msg
     del st.session_state.sys_msg_type
 
@@ -460,8 +438,7 @@ with tab_history:
     edit_mode = st.radio("請選擇要修改的紀錄類型：", ["日常行車", "柴油紀錄", "尿素紀錄"], horizontal=True)
     
     if edit_mode == "日常行車":
-        if not st.session_state.daily_logs:
-            st.info("目前沒有資料可修改")
+        if not st.session_state.daily_logs: st.info("目前沒有資料可修改")
         else:
             all_months = sorted(list(set([str(log.get('日期', ''))[:7] for log in st.session_state.daily_logs if log.get('日期')])), reverse=True)
             selected_month = st.selectbox("📅 第一步：選擇月份", all_months, key="hist_m1")
@@ -471,8 +448,7 @@ with tab_history:
                     log_options.append((idx + 2, f"[{log.get('日期')}] {log.get('目的地')} (返廠: {log.get('返廠里程')})", log))
             log_options = sorted(log_options, key=lambda x: str(x[2].get('日期', '')), reverse=True)
             
-            if not log_options:
-                st.warning("該月份無紀錄")
+            if not log_options: st.warning("該月份無紀錄")
             else:
                 selected_label = st.selectbox("✏️ 第二步：選擇紀錄", [item[1] for item in log_options])
                 target_row_num, _, target_log = next(item for item in log_options if item[1] == selected_label)
@@ -490,10 +466,8 @@ with tab_history:
                         e_ret_mil = st.number_input("返廠里程", value=safe_int(target_log.get("返廠里程")), step=1)
                     
                     c_btn1, c_btn2 = st.columns(2)
-                    with c_btn1:
-                        btn_save_edit = st.form_submit_button("💾 儲存修改", use_container_width=True)
-                    with c_btn2:
-                        btn_delete = st.form_submit_button("🗑️ 刪除紀錄", use_container_width=True)
+                    with c_btn1: btn_save_edit = st.form_submit_button("💾 儲存修改", use_container_width=True)
+                    with c_btn2: btn_delete = st.form_submit_button("🗑️ 刪除紀錄", use_container_width=True)
                     
                     if btn_save_edit:
                         updated_row = [e_date.strftime("%Y-%m-%d"), e_user, e_dest, e_st_time, int(e_st_mil), e_ret_time, int(e_ret_mil), str(target_log.get("備註", ""))]
@@ -508,8 +482,7 @@ with tab_history:
                         st.rerun()
 
     elif edit_mode == "柴油紀錄":
-        if not st.session_state.fuel_logs:
-            st.info("目前沒有柴油資料")
+        if not st.session_state.fuel_logs: st.info("目前沒有柴油資料")
         else:
             log_options = [(idx + 2, f"[{log.get('加油日期')}] {log.get('加油站名')} - {log.get('公升數')}L (里程: {log.get('加油里程')})", log) for idx, log in enumerate(st.session_state.fuel_logs)]
             log_options = sorted(log_options, key=lambda x: str(x[2].get('加油日期', '')), reverse=True)
@@ -524,10 +497,8 @@ with tab_history:
                 e_fc = st.number_input("費用 (元)", value=safe_int(target_log.get("加油費用")), step=1)
                 
                 c_btn1, c_btn2 = st.columns(2)
-                with c_btn1:
-                    btn_save = st.form_submit_button("💾 儲存修改", use_container_width=True)
-                with c_btn2:
-                    btn_del = st.form_submit_button("🗑️ 刪除", use_container_width=True)
+                with c_btn1: btn_save = st.form_submit_button("💾 儲存修改", use_container_width=True)
+                with c_btn2: btn_del = st.form_submit_button("🗑️ 刪除", use_container_width=True)
                 
                 if btn_save:
                     upd_row = [e_fd.strftime("%Y-%m-%d"), target_log.get("加油時間", ""), int(e_fm), float(e_fl), int(e_fc), target_log.get("加油站名", "")]
@@ -542,8 +513,7 @@ with tab_history:
                     st.rerun()
 
     elif edit_mode == "尿素紀錄":
-        if not st.session_state.urea_logs:
-            st.info("目前沒有尿素資料")
+        if not st.session_state.urea_logs: st.info("目前沒有尿素資料")
         else:
             log_options = [(idx + 2, f"[{log.get('添加日期')}] {log.get('公升數')}L (里程: {log.get('添加當下里程', '未填')})", log) for idx, log in enumerate(st.session_state.urea_logs)]
             log_options = sorted(log_options, key=lambda x: str(x[2].get('添加日期', '')), reverse=True)
@@ -558,10 +528,8 @@ with tab_history:
                 e_uc = st.number_input("費用 (元)", value=safe_int(target_log.get("費用")), step=1)
                 
                 c_btn1, c_btn2 = st.columns(2)
-                with c_btn1:
-                    btn_save = st.form_submit_button("💾 儲存修改", use_container_width=True)
-                with c_btn2:
-                    btn_del = st.form_submit_button("🗑️ 刪除", use_container_width=True)
+                with c_btn1: btn_save = st.form_submit_button("💾 儲存修改", use_container_width=True)
+                with c_btn2: btn_del = st.form_submit_button("🗑️ 刪除", use_container_width=True)
                 
                 if btn_save:
                     upd_row = [e_ud.strftime("%Y-%m-%d"), target_log.get("添加時間", ""), float(e_ul), int(e_uc), target_log.get("備註", ""), int(e_um)]
@@ -581,14 +549,10 @@ with tab_stats:
     st.subheader("⚠️ 硬體異常防呆監控")
     if historical_km_l > 0.1 and len(sorted_fuel_logs) >= 3:
         drop_ratio = (historical_km_l - global_fuel_km_l) / historical_km_l
-        if drop_ratio >= 0.15:
-            st.error(f"🔴 **警告！油耗異常崩跌**\n\n歷史平均油耗為 **{historical_km_l} km/L**，但最新一期驟降至 **{global_fuel_km_l} km/L** (跌幅 {drop_ratio*100:.1f}%)。\n\n**請盡速檢查：** 胎壓過低、煞車咬死、DPF 濾清器阻塞，或管路漏油。")
-        elif drop_ratio <= -0.15:
-            st.success(f"🟢 **油耗表現優異**：最新油耗 {global_fuel_km_l} km/L 優於歷史平均 {historical_km_l} km/L！")
-        else:
-            st.info(f"✅ **車況健康**：最新油耗 {global_fuel_km_l} km/L 與歷史平均一致，無異常阻力。")
-    else:
-        st.caption("累積滿 3 次加油紀錄後，將自動啟動硬體異常防呆雷達。")
+        if drop_ratio >= 0.15: st.error(f"🔴 **警告！油耗異常崩跌**\n\n歷史平均油耗為 **{historical_km_l} km/L**，但最新一期驟降至 **{global_fuel_km_l} km/L** (跌幅 {drop_ratio*100:.1f}%)。\n\n**請盡速檢查：** 胎壓過低、煞車咬死、DPF 濾清器阻塞，或管路漏油。")
+        elif drop_ratio <= -0.15: st.success(f"🟢 **油耗表現優異**：最新油耗 {global_fuel_km_l} km/L 優於歷史平均 {historical_km_l} km/L！")
+        else: st.info(f"✅ **車況健康**：最新油耗 {global_fuel_km_l} km/L 與歷史平均一致，無異常阻力。")
+    else: st.caption("累積滿 3 次加油紀錄後，將自動啟動硬體異常防呆雷達。")
 
     st.divider()
     st.subheader("📊 未來進站預測引擎 (絕對里程防呆)")
@@ -614,10 +578,8 @@ with tab_stats:
             
             st.success(f"✅ **預估進站點 (柴油主導)：【 里程 {target_fuel_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
             
-            if future_urea_vol >= 8.0:
-                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將從目前 {rem_urea_vol:.1f}L 消耗至約 **{future_urea_vol:.1f} 公升** (安全)，單純補滿柴油即可！")
-            else:
-                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將消耗至剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
+            if future_urea_vol >= 8.0: st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將從目前 {rem_urea_vol:.1f}L 消耗至約 **{future_urea_vol:.1f} 公升** (安全)，單純補滿柴油即可！")
+            else: st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將消耗至剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
                 
         else:
             default_station_mil = target_urea_mil
@@ -626,51 +588,36 @@ with tab_stats:
             
             st.error(f"🚨 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
             st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n開到 **{target_urea_mil:,} km** 時尿素將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
-    else:
-        st.info("🔄 智慧預測引擎需要至少 2 筆以上的柴/尿紀錄來運算。")
+    else: st.info("🔄 智慧預測引擎需要至少 2 筆以上的柴/尿紀錄來運算。")
 
     st.divider()
     st.markdown(f"**目前車輛剩餘狀況** (以最新里程 {latest_return_mileage:,} km 結算)")
     
     c_dash1, c_dash2 = st.columns(2)
-    with c_dash1:
-        st.metric(label="距上次加油已跑", value=f"{used_km_since_fuel} km", delta=f"柴油即時剩餘 {vol_after_today:.1f} L", delta_color="off")
-    with c_dash2:
-        st.metric("最新一期油耗", f"{global_fuel_km_l} km/L")
+    with c_dash1: st.metric(label="距上次加油已跑", value=f"{used_km_since_fuel} km", delta=f"柴油即時剩餘 {vol_after_today:.1f} L", delta_color="off")
+    with c_dash2: st.metric("最新一期油耗", f"{global_fuel_km_l} km/L")
         
     rem_safe_km = int(vol_after_today * global_fuel_km_l)
-    if rem_safe_km < 60:
-        st.error(f"🔴 柴油極危險！含油底續航僅剩 {rem_safe_km} km，請立刻補油！")
-    elif 60 <= rem_safe_km < 100:
-        st.warning(f"🟡 柴油警戒！續航剩 {rem_safe_km} km，上高速前請確認無塞車。")
+    if rem_safe_km < 60: st.error(f"🔴 柴油極危險！含油底續航僅剩 {rem_safe_km} km，請立刻補油！")
+    elif 60 <= rem_safe_km < 100: st.warning(f"🟡 柴油警戒！續航剩 {rem_safe_km} km，上高速前請確認無塞車。")
     
     st.divider()
     c_u1, c_u2 = st.columns(2)
     with c_u1:
-        if urea_with_mil:
-            st.metric(label="距上次加尿已跑", value=f"{driven_since_urea} km", delta=f"尿素即時剩餘 {rem_urea_vol:.1f} L", delta_color="off")
-        else:
-            st.metric(label="距上次加尿已跑", value="資料不足")
+        if urea_with_mil: st.metric(label="距上次加尿已跑", value=f"{driven_since_urea} km", delta=f"尿素即時剩餘 {rem_urea_vol:.1f} L", delta_color="off")
+        else: st.metric(label="距上次加尿已跑", value="資料不足")
     with c_u2:
-        if urea_km_l > 1.0:
-            st.metric("歷史尿素平均耗能", f"{urea_km_l} km/L")
-        else:
-            st.metric("近期尿素耗能", "資料不足")
+        if urea_km_l > 1.0: st.metric("歷史尿素平均耗能", f"{urea_km_l} km/L")
+        else: st.metric("近期尿素耗能", "資料不足")
             
     if urea_km_l > 1.0:
-        if 4.0 <= rem_urea_vol < 8.0:
-            st.warning(f"⚠️ 尿素警戒：即時剩餘 {rem_urea_vol:.1f} L (逼近 8L 安全防線)")
-        elif rem_urea_vol < 4.0:
-            st.error(f"🔴 尿素危險：即時剩餘 {rem_urea_vol:.1f} L！避免抽不到底鎖死，請盡速補加！")
+        if 4.0 <= rem_urea_vol < 8.0: st.warning(f"⚠️ 尿素警戒：即時剩餘 {rem_urea_vol:.1f} L (逼近 8L 安全防線)")
+        elif rem_urea_vol < 4.0: st.error(f"🔴 尿素危險：即時剩餘 {rem_urea_vol:.1f} L！避免抽不到底鎖死，請盡速補加！")
 
     st.divider()
-    
-    # ================= 🚀 補給站整合主控中心 =================
     st.markdown("### ⛽💧 補給站登記中心")
-    if default_station_mil > latest_return_mileage:
-        st.caption(f"🤖 **神預測同步**：AI 已自動預載預估進站里程，您只需微調最後幾碼即可！")
-    else:
-        st.caption("💡 輸入當下儀表板里程，可自由勾選同時登記柴油或尿素，一鍵上傳！")
+    if default_station_mil > latest_return_mileage: st.caption(f"🤖 **神預測同步**：AI 已自動預載預估進站里程，您只需微調最後幾碼即可！")
+    else: st.caption("💡 輸入當下儀表板里程，可自由勾選同時登記柴油或尿素，一鍵上傳！")
     
     with st.form("station_master_form"):
         shared_station_mil = st.number_input("補給當下儀表板總里程 (km)", value=int(default_station_mil), step=1)
@@ -679,26 +626,20 @@ with tab_stats:
         st.markdown("---")
         chk_fuel = st.checkbox("☑️ 登記柴油", value=True)
         col_f1, col_f2, col_f3 = st.columns(3)
-        with col_f1:
-            fuel_l = st.number_input("柴油公升數 (L)", value=150.0, step=0.1)
-        with col_f2:
-            fuel_cost = st.number_input("柴油實付費用 (元)", value=4500, step=10)
-        with col_f3:
-            fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"])
+        with col_f1: fuel_l = st.number_input("柴油公升數 (L)", value=150.0, step=0.1)
+        with col_f2: fuel_cost = st.number_input("柴油實付費用 (元)", value=4500, step=10)
+        with col_f3: fuel_station = st.selectbox("加油站", ["中油苗栗站", "中油新竹站", "其他"])
             
         st.markdown("---")
         chk_urea = st.checkbox("☑️ 登記尿素", value=False)
         col_u1, col_u2 = st.columns(2)
-        with col_u1:
-            urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
-        with col_u2:
-            urea_cost = st.number_input("尿素費用 (元)", value=500, step=10)
+        with col_u1: urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
+        with col_u2: urea_cost = st.number_input("尿素費用 (元)", value=500, step=10)
             
         submit_station = st.form_submit_button("🚀 一鍵同步儲存 (只會上傳有打勾的項目)", use_container_width=True)
         
         if submit_station:
-            if not chk_fuel and not chk_urea:
-                st.warning("⚠️ 請至少勾選「柴油」或「尿素」其中一項！")
+            if not chk_fuel and not chk_urea: st.warning("⚠️ 請至少勾選「柴油」或「尿素」其中一項！")
             else:
                 msg_list = []
                 cur_hhmm = now_time.strftime("%H:%M")
@@ -728,12 +669,10 @@ with tab_settings:
     st.subheader("⚙️ 系統與法規參數設定")
     with st.form("settings_form"):
         new_target = st.number_input("下次保養里程目標 (km)", value=st.session_state.service_target, step=1000)
-        
         st.markdown("---")
         st.markdown("**法規檢驗排程 (請依照行照指定日期填寫)**")
         new_v_date = st.date_input("下次驗車到期日", next_v_date)
         new_e_date = st.date_input("下次驗排氣到期日", next_e_date)
-        
         st.markdown("---")
         st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前由 AI 自動微調鎖定在：{tank_cap} L*")
         
@@ -746,7 +685,6 @@ with tab_settings:
                 ["NEXT_EMISSIONS_INSP", new_e_date.strftime("%Y-%m-%d")]
             ]
             ws_settings.update(values=update_vals, range_name="A1:B4")
-            
             st.session_state.service_target = new_target
             st.session_state.sys_msg = "✅ 所有保養與檢驗目標已更新並存入雲端！"
             st.session_state.sys_msg_type = "success"
