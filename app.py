@@ -237,7 +237,7 @@ def calculate_service_prediction(target_mileage):
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
 
-# ================= 1:1 原樣 A4 報表生成 =================
+# ================= 1:1 原樣 A4 報表生成（已修正 A3 右側無謂框線） =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -287,6 +287,8 @@ def generate_kertz_excel(year: int, month: int):
     ws["H2"].alignment = align_left
 
     roc_year = year - 1911
+    
+    # 第三列：行車日誌 (合併 A3:B3，右側 B3 無框線以符合實體單)
     ws.merge_cells("A3:B3")
     ws["A3"] = "行車日誌"
     ws["A3"].font = font_bold_md
@@ -303,10 +305,15 @@ def generate_kertz_excel(year: int, month: int):
         cell.font = font_bold_md
         cell.alignment = align_center
 
+    # 針對第三列的特殊邊框處理（移除 A3與B3 之間、以及 B3 與 C3 之間的隔線視覺干擾）
     for r in range(1, 5):
         ws.row_dimensions[r].height = 28
         for c in range(1, 10):
             ws.cell(row=r, column=c).border = border_all
+    
+    # 修正 A3:B3 合併後的右側線條讓它融入整體
+    ws["A3"].border = Border(top=thin, left=thin, bottom=thin)
+    ws["B3"].border = Border(top=thin, right=thin, bottom=thin)
 
     prefix = f"{year:04d}-{month:02d}"
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
@@ -608,7 +615,7 @@ with tab_stats:
             st.success(f"✅ **預估進站點 (柴油主導)：【 里程 {target_fuel_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
             
             if future_urea_vol >= 8.0:
-                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將從目前 19.7L 消耗至約 **{future_urea_vol:.1f} 公升** (安全)，單純補滿柴油即可！")
+                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將從目前 {rem_urea_vol:.1f}L 消耗至約 **{future_urea_vol:.1f} 公升** (安全)，單純補滿柴油即可！")
             else:
                 st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將消耗至剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
                 
