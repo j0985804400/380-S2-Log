@@ -507,7 +507,7 @@ with tab_stats:
         st.caption("累積滿 3 次加油紀錄後，將自動啟動硬體異常防呆雷達。")
 
     st.divider()
-    st.subheader("📊 未來進站日預測引擎")
+    st.subheader("📊 未來進站預測引擎 (絕對里程防呆)")
     if urea_km_l > 0 and global_fuel_km_l > 0 and avg_daily_km > 0:
         safe_fuel_vol = 60 / global_fuel_km_l
         usable_fuel_vol = max(0, vol_after_today - safe_fuel_vol)
@@ -518,25 +518,27 @@ with tab_stats:
         urea_runnable_km = usable_urea_vol * urea_km_l
         urea_days_left = urea_runnable_km / avg_daily_km
 
-        st.markdown("### 🔄 智慧進站策略 (下次該加什麼？)")
+        st.markdown("### 🔄 智慧進站策略 (看里程表最準！)")
         
         if urea_runnable_km >= fuel_runnable_km:
+            target_fuel_mil = latest_return_mileage + math.floor(fuel_runnable_km)
             target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(fuel_days_left))
             future_urea_vol = rem_urea_vol - (fuel_runnable_km / urea_km_l)
             
-            st.success(f"✅ **預估進站日 (柴油主導)：【 {target_date.strftime('%m月%d日')} 】 (約再跑 {math.floor(fuel_days_left)} 天)**")
+            st.success(f"✅ **預估進站點 (柴油主導)：【 里程 {target_fuel_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
             
             if future_urea_vol >= 8.0:
-                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n預計進站時，尿素還剩 **{future_urea_vol:.1f} 公升 (大於 8L 安全底線)**，單純補滿柴油即可！")
+                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{target_fuel_mil:,} km** 時，尿素約還剩 **{future_urea_vol:.1f} 公升** (安全)，單純補滿柴油即可！")
             else:
-                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n預計進站時，尿素只剩 **{future_urea_vol:.1f} 公升** (準備逼近防護線)，建議兩管齊下一次加滿！")
+                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，尿素約剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
                 
         else:
+            target_urea_mil = latest_return_mileage + math.floor(urea_runnable_km)
             target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(urea_days_left))
             future_fuel_vol = vol_after_today - (urea_runnable_km / global_fuel_km_l)
             
-            st.error(f"🚨 **尿素告急！需提早進站：【 {target_date.strftime('%m月%d日')} 】 (約再跑 {math.floor(urea_days_left)} 天)**")
-            st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n尿素即將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
+            st.error(f"🚨 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
+            st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n開到 **{target_urea_mil:,} km** 時尿素將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
     else:
         st.info("🔄 智慧預測引擎需要至少 2 筆以上的柴/尿紀錄來運算。")
 
