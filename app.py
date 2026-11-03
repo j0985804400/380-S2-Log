@@ -232,7 +232,7 @@ def generate_kertz_excel(year: int, month: int):
     thin = Side(border_style="thin", color="000000")
     border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
     
-    # 拔除 wrap_text，保證所有文字絕對橫排到底，不折行、不切字
+    # 關閉自動換行，保證文字絕對橫排
     align_center = Alignment(horizontal="center", vertical="center", wrap_text=False)
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
@@ -268,21 +268,20 @@ def generate_kertz_excel(year: int, month: int):
     ws["H2"].font = Font(name=font_family, size=10)
     ws["H2"].alignment = align_left
 
-    # === 徹底修正第三列：A3 到 I3 變成一個完整的長條大格 ===
+    # === 終極修正：A3 到 I3 直接大一統合併，絕對不再有內線 ===
     roc_year = year - 1911
     ws.merge_cells("A3:I3")
     ws["A3"] = f"行車日誌               月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
     ws["A3"].font = font_bold_md
-    ws["A3"].alignment = align_left # 靠左對齊，用空白隔開
+    ws["A3"].alignment = align_left 
 
-    # === 第四列：橫排標題，絕對不折行 ===
+    # === 標題橫排：不切字，回歸單純橫列 ===
     headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
     for col_idx, text in enumerate(headers, start=1):
         cell = ws.cell(row=4, column=col_idx, value=text)
         cell.font = font_bold_md
         cell.alignment = align_center 
 
-    # 畫框線 (A3:I3 合併後只有一個大外框，內部絕對沒有亂七八糟的隔線)
     for r in range(1, 5):
         ws.row_dimensions[r].height = 28
         for c in range(1, 10):
@@ -323,17 +322,17 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    # === 重新調配物理欄寬：讓「出發時間/返廠時間」有足夠空間橫排，不被擠成兩行 ===
+    # === 重新調配物理欄寬：完美平衡後方欄位「均寬」視覺 ===
     col_widths = {
-        "A": 5.5,   # 日期
-        "B": 8.5,   # 使用人
-        "C": 13.0,  # 目的地
-        "D": 10.5,  # 出發時間
-        "E": 12.0,  # 出發里程
-        "F": 10.5,  # 返廠時間
-        "G": 12.0,  # 返廠里程
-        "H": 12.0,  # 加油里程
-        "I": 10.0   # 加油費用
+        "A": 5.0,   # 日期
+        "B": 8.0,   # 使用人
+        "C": 14.0,  # 目的地
+        "D": 11.0,  # 出發時間
+        "E": 11.5,  # 出發里程
+        "F": 11.0,  # 返廠時間
+        "G": 11.5,  # 返廠里程
+        "H": 11.5,  # 加油里程
+        "I": 11.0   # 加油費用
     }
     for col, width in col_widths.items(): ws.column_dimensions[col].width = width
 
@@ -674,18 +673,4 @@ with tab_settings:
         new_v_date = st.date_input("下次驗車到期日", next_v_date)
         new_e_date = st.date_input("下次驗排氣到期日", next_e_date)
         st.markdown("---")
-        st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前由 AI 自動微調鎖定在：{tank_cap} L*")
-        
-        submit_settings = st.form_submit_button("💾 儲存所有設定", use_container_width=True)
-        if submit_settings:
-            update_vals = [
-                ["SERVICE_TARGET", new_target],
-                ["FUEL_TANK_CAPACITY", base_tank_capacity],
-                ["NEXT_VEHICLE_INSP", new_v_date.strftime("%Y-%m-%d")],
-                ["NEXT_EMISSIONS_INSP", new_e_date.strftime("%Y-%m-%d")]
-            ]
-            ws_settings.update(values=update_vals, range_name="A1:B4")
-            st.session_state.service_target = new_target
-            st.session_state.sys_msg = "✅ 所有保養與檢驗目標已更新並存入雲端！"
-            st.session_state.sys_msg_type = "success"
-            st.rerun()
+        st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前
