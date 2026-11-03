@@ -38,11 +38,10 @@ ws_daily = sh.worksheet("Daily_Logs")
 ws_fuel = sh.worksheet("Fuel_Logs")
 ws_urea = sh.worksheet("Urea_Logs")
 
-# ================= 設定檔初始化與讀取 (改為直接記錄「下次到期日」) =================
+# ================= 設定檔初始化與讀取 =================
 sheet_titles = [w.title for w in sh.worksheets()]
 if "Settings" not in sheet_titles:
     ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
-    # 預設幫你往後推半年跟一年作為初始值
     default_vals = [
         ["SERVICE_TARGET", 622000],
         ["FUEL_TANK_CAPACITY", 130.0],
@@ -62,7 +61,6 @@ except:
 st.session_state.service_target = int(settings_dict.get("SERVICE_TARGET", 622000))
 base_tank_capacity = float(settings_dict.get("FUEL_TANK_CAPACITY", 130.0))
 
-# 直接抓取「下次」到期日
 next_v_insp = settings_dict.get("NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d"))
 next_e_insp = settings_dict.get("NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d"))
 
@@ -198,7 +196,7 @@ def calculate_service_prediction(logs, target_mileage):
     if avg_daily_km <= 0: return "計算中"
     days_remaining = int(km_remaining / avg_daily_km)
     est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
-    return est_date.strftime("%m月%d日")
+    return est_date.strftime("%m/%d")
 
 est_service_date = calculate_service_prediction(sorted_all_logs, st.session_state.service_target)
 
@@ -329,16 +327,33 @@ st.markdown("""
 """, unsafe_allow_html=True)
 st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
 
-# ================= 綜合提醒儀表板 =================
-col_dash1, col_dash2, col_dash3 = st.columns(3)
-with col_dash1:
-    st.metric("🔧 距保養剩餘", f"{rem_service:,} km", delta=est_service_date, delta_color="normal")
-with col_dash2:
-    v_alert = f"🔴 逾期 {abs(days_to_v)} 天" if days_to_v < 0 else (f"🟡 剩 {days_to_v} 天" if days_to_v <= 30 else f"🟢 剩 {days_to_v} 天")
-    st.metric("📋 驗車到期", next_v_date.strftime("%m/%d"), delta=v_alert, delta_color="off" if days_to_v > 30 else ("inverse" if days_to_v <= 30 else "normal"))
-with col_dash3:
-    e_alert = f"🔴 逾期 {abs(days_to_e)} 天" if days_to_e < 0 else (f"🟡 剩 {days_to_e} 天" if days_to_e <= 30 else f"🟢 剩 {days_to_e} 天")
-    st.metric("💨 排氣到期", next_e_date.strftime("%m/%d"), delta=e_alert, delta_color="off" if days_to_e > 30 else ("inverse" if days_to_e <= 30 else "normal"))
+# ================= 綜合提醒儀表板 (極致壓縮戰術版) =================
+svc_color = "#00c04b" if "月" in est_service_date else "gray"
+svc_text = f"預估 {est_service_date}" if "月" in est_service_date else est_service_date
+
+v_alert_num = f"逾期 {abs(days_to_v)} 天" if days_to_v < 0 else f"剩 {days_to_v} 天"
+v_color = "#ff4b4b" if days_to_v < 0 else ("#ffa421" if days_to_v <= 30 else "#00c04b")
+
+e_alert_num = f"逾期 {abs(days_to_e)} 天" if days_to_e < 0 else f"剩 {days_to_e} 天"
+e_color = "#ff4b4b" if days_to_e < 0 else ("#ffa421" if days_to_e <= 30 else "#00c04b")
+
+st.markdown(f"""
+<div style="display: flex; justify-content: space-between; align-items: center; background-color: rgba(128,128,128,0.1); padding: 12px 5px; border-radius: 8px; margin-bottom: 15px;">
+    <div style="flex: 1; text-align: center; border-right: 1px solid rgba(128,128,128,0.3);">
+        <div style="font-size: 12px; opacity: 0.8;">🔧 距保養剩餘</div>
+        <div style="font-size: 18px; font-weight: bold; margin: 4px 0;">{rem_service:,} <span style="font-size: 10px; font-weight: normal;">km</span></div>
+        <div style="font-size: 12px; color: {svc_color};">{svc_text}</div>
+    </div>
+    <div style="flex: 1; text-align: center; border-right: 1px solid rgba(128,128,128,0.3);">
+        <div style="font-size: 12px; opacity: 0.8;">📋 驗車 {next_v_date.strftime('%m/%d')}</div>
+        <div style="font-size: 16px; font-weight: bold; color: {v_color}; margin: 4px 0;">{v_alert_num}</div>
+    </div>
+    <div style="flex: 1; text-align: center;">
+        <div style="font-size: 12px; opacity: 0.8;">💨 排氣 {next_e_date.strftime('%m/%d')}</div>
+        <div style="font-size: 16px; font-weight: bold; color: {e_color}; margin: 4px 0;">{e_alert_num}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 if "sys_msg" in st.session_state:
     if st.session_state.sys_msg_type == "warning": st.warning(st.session_state.sys_msg)
