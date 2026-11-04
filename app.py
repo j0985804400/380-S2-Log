@@ -254,7 +254,7 @@ def calculate_service_prediction(target_mileage):
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
 
-# ================= 1:1 終極物理換算 A4 報表生成 =================
+# ================= 1:1 行高極限特化 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -273,12 +273,12 @@ def generate_kertz_excel(year: int, month: int):
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
-    # 邊界維持 1cm (左右0.4吋)，上方 2cm (0.8吋)
+    # 物理極限還原：上方 0.8吋(約2cm)，下收 0.3吋保留彈性，左右 0.4吋(約1cm)
     ws.page_margins.top = 0.8
-    ws.page_margins.bottom = 0.5
+    ws.page_margins.bottom = 0.3 
     ws.page_margins.left = 0.4
     ws.page_margins.right = 0.4
-    ws.print_options.horizontalCentered = True  # 【修正】：確保表格在頁面置中
+    ws.print_options.horizontalCentered = True  # 確保印出來絕對置中
 
     def apply_outer_border(ws, r_start, c_start, r_end, c_end):
         for r in range(r_start, r_end + 1):
@@ -326,9 +326,9 @@ def generate_kertz_excel(year: int, month: int):
         cell.alignment = align_center 
         cell.border = border_all
 
-    # 【修正】：下調列高，避免表格超出版面觸發 Excel「縮水等比縮放機制」
+    # 【核心優化】標題列加高到 25，填補底部空白
     for r in range(1, 5):
-        ws.row_dimensions[r].height = 22 # 降高
+        ws.row_dimensions[r].height = 25 
 
     prefix = f"{year:04d}-{month:02d}"
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
@@ -343,7 +343,8 @@ def generate_kertz_excel(year: int, month: int):
     start_row = 5
     for i in range(31):
         curr_row = start_row + i
-        ws.row_dimensions[curr_row].height = 20 # 降高
+        # 【核心優化】資料列加高到 21.5，將 50 點的空白撐滿整張 A4
+        ws.row_dimensions[curr_row].height = 21.5 
         
         if i < len(m_logs):
             log = m_logs[i]
@@ -370,7 +371,6 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    # 【修正】：微調橫向撐寬，確保填滿左右 1cm 空白
     col_widths = {
         "A": 5.0,
         "B": 15.0,  
@@ -388,7 +388,8 @@ def generate_kertz_excel(year: int, month: int):
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
     ws.page_setup.fitToPage = True
     ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 1
+    # 【核心優化】解除高度限制！告訴 Excel：「寬度幫我鎖死 1 頁，高度自然往下排就好」，根除縮水白邊
+    ws.page_setup.fitToHeight = 0 
     
     buf = io.BytesIO()
     wb.save(buf)
@@ -764,7 +765,7 @@ with tab_settings:
         st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前由 AI 自動微調鎖定在：{tank_cap} L*")
         st.markdown("---")
         st.markdown("**🔔 LINE Notify 機器人推播設定**")
-        new_line_token = st.text_input("輸入 LINE Token (用於自動發送保養與尿素警告)", value=line_token, type="password")
+        new_line_token = st.text_input("輸入 LINE Token (可用於自動發送保養與尿素警告)", value=line_token, type="password")
         st.caption("請至 [LINE Notify 官方網站](https://notify-bot.line.me/my/) 申請權杖並貼上。")
         
         submit_settings = st.form_submit_button("💾 儲存所有設定", use_container_width=True)
