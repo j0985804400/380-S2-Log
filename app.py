@@ -12,19 +12,23 @@ from oauth2client.service_account import ServiceAccountCredentials
 # ================= 系統安全轉型防呆函數 =================
 def safe_int(val, default=0):
     try:
-        if val is None or val == "": return default
+        if val is None or str(val).strip() == "" or str(val) == "None": return default
         return int(float(val))
     except: return default
 
 def safe_float(val, default=0.0):
     try:
-        if val is None or val == "": return default
+        if val is None or str(val).strip() == "" or str(val) == "None": return default
         return float(val)
     except: return default
 
 def parse_date_safe(date_str, default_date):
-    try: return datetime.strptime(str(date_str).strip(), "%Y-%m-%d").date()
-    except: return default_date
+    if not date_str or str(date_str).strip() == "" or str(date_str) == "None":
+        return default_date
+    try: 
+        return datetime.strptime(str(date_str).strip(), "%Y-%m-%d").date()
+    except: 
+        return default_date
 
 # ================= 系統固定參數與時區設定 =================
 DEFAULT_PLATE = "380-S2"
@@ -41,74 +45,83 @@ TODAY = now_time.date()
 if now_time.hour < 4: SHIFT_DATE = (now_time - timedelta(days=1)).date()
 else: SHIFT_DATE = TODAY
 
-# ================= Google Sheets 雲端連線設定 =================
-@st.cache_resource
-def get_gsheets_client():
+# ================= Google Sheets 雲端連線與極速快取設定 =================
+# 【優化】快取認證金鑰與試算表物件，存活時間設為 1 小時，避免頻繁呼叫 API 造成延遲
+@st.cache_resource(ttl=3600)
+def get_spreadsheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     if "google_key" in st.secrets:
         creds_dict = json.loads(st.secrets["google_key"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     else:
         creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-    return gspread.authorize(creds)
-
-client = get_gsheets_client()
-sh = client.open("380-S2_公務車行車紀錄系統")
-ws_daily = sh.worksheet("Daily_Logs")
-ws_fuel = sh.worksheet("Fuel_Logs")
-ws_urea = sh.worksheet("Urea_Logs")
-
-# ================= 設定檔初始化與讀取 =================
-sheet_titles = [w.title for w in sh.worksheets()]
-if "Settings" not in sheet_titles:
-    ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
-    default_vals = [
-        ["SERVICE_TARGET", 622000],
-        ["FUEL_TANK_CAPACITY", 130.0],
-        ["NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d")],
-        ["NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d")]
-    ]
-    ws_settings.update(values=default_vals, range_name="A1:B4")
-else:
-    ws_settings = sh.worksheet("Settings")
+    client = gspread.authorize(creds)
+    return client.open("380-S2_公務車行車紀錄系統")
 
 try:
-    settings_vals = ws_settings.get_all_values()
-    settings_dict = {row[0]: row[1] for row in settings_vals if len(row) >= 2}
-except:
-    settings_dict = {}
+    sh = get_spreadsheet()
+    ws_daily = sh.worksheet("Daily_Logs")
+    ws_fuel = sh.worksheet("Fuel_Logs")
+    ws_urea = sh.worksheet("Urea_Logs")
+except Exception as e:
+    st.error(f"雲端連線異常，請檢查金鑰: {e}")
+    st.stop()
 
-st.session_state.service_target = safe_int(settings_dict.get("SERVICE_TARGET"), 622000)
-base_tank_capacity = safe_float(settings_dict.get("FUEL_TANK_CAPACITY"), 130.0)
+# 【優化】加入狀態鎖：只有發生新增/刪除/修改時，才允許去抓取雲端資料，解決轉圈圈卡頓問題
+if "force_refresh" not in st.session_state:
+    st.session_state.force_refresh = True
 
-next_v_insp = settings_dict.get("NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d"))
-next_e_insp = settings_dict.get("NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d"))
+def load_data():
+    if st.session_state.force_refresh:
+        try:
+            # 1. 抓取設定參數
+            sheet_titles = [w.title for w in sh.worksheets()]
+            if "Settings" not in sheet_titles:
+                ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
+                default_vals = [
+                    ["SERVICE_TARGET", 622000],
+                    ["FUEL_TANK_CAPACITY", 130.0],
+                    ["NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d")],
+                    ["NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d")]
+                ]
+                ws_settings.update(values=default_vals, range_name="A1:B4")
+            else:
+                ws_settings = sh.worksheet("Settings")
+                
+            settings_vals = ws_settings.get_all_values()
+            st.session_state.settings_dict = {row[0]: row[1] for row in settings_vals if len(row) >= 2}
+            
+            # 2. 抓取三大紀錄表
+            st.session_state.daily_logs = ws_daily.get_all_records()
+            st.session_state.fuel_logs = ws_fuel.get_all_records()
+            st.session_state.urea_logs = ws_urea.get_all_records()
+
+            if not st.session_state.daily_logs: 
+                st.session_state.daily_logs = [{"日期": "2026-10-31", "使用人": "劉嘉舜", "目的地": "美光", "出發時間": "07:20", "出發里程": 615049, "返廠時間": "18:30", "返廠里程": 615215, "備註": "系統基準"}]
+            if not st.session_state.fuel_logs: 
+                st.session_state.fuel_logs = [{"加油日期": "2026-10-30", "加油時間": "18:40", "加油里程": 614997, "公升數": 130.0, "加油費用": 3816, "加油站名": "中油苗栗站"}]
+            if not st.session_state.urea_logs: 
+                st.session_state.urea_logs = [{"添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加", "添加當下里程": 614997}]
+                
+            if "destinations" not in st.session_state:
+                st.session_state.destinations = ["美光", "順益", "廠內調度"]
+                
+            # 任務完成，關閉強制刷新鎖
+            st.session_state.force_refresh = False
+        except Exception as e:
+            st.error(f"資料讀取失敗: {e}")
+
+load_data()
+
+st.session_state.service_target = safe_int(st.session_state.settings_dict.get("SERVICE_TARGET"), 622000)
+base_tank_capacity = safe_float(st.session_state.settings_dict.get("FUEL_TANK_CAPACITY"), 130.0)
+
+next_v_insp = st.session_state.settings_dict.get("NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d"))
+next_e_insp = st.session_state.settings_dict.get("NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d"))
 next_v_date = parse_date_safe(next_v_insp, TODAY)
 next_e_date = parse_date_safe(next_e_insp, TODAY)
 days_to_v = (next_v_date - TODAY).days
 days_to_e = (next_e_date - TODAY).days
-
-# ================= 資料同步與快取 =================
-def load_data():
-    try:
-        daily_data = ws_daily.get_all_records()
-        fuel_data = ws_fuel.get_all_records()
-        urea_data = ws_urea.get_all_records()
-    except Exception as e:
-        st.error(f"雲端資料讀取失敗: {e}")
-        return
-
-    if not daily_data: daily_data = [{"日期": "2026-10-31", "使用人": "劉嘉舜", "目的地": "美光", "出發時間": "07:20", "出發里程": 615049, "返廠時間": "18:30", "返廠里程": 615215, "備註": "系統基準"}]
-    if not fuel_data: fuel_data = [{"加油日期": "2026-10-30", "加油時間": "18:40", "加油里程": 614997, "公升數": 130.0, "加油費用": 3816, "加油站名": "中油苗栗站"}]
-    if not urea_data: urea_data = [{"添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加", "添加當下里程": 614997}]
-        
-    st.session_state.daily_logs = daily_data
-    st.session_state.fuel_logs = fuel_data
-    st.session_state.urea_logs = urea_data
-    if "destinations" not in st.session_state:
-        st.session_state.destinations = ["美光", "順益", "廠內調度"]
-
-load_data()
 
 all_recorded_mil = [safe_int(x.get("返廠里程")) for x in st.session_state.daily_logs] + \
                    [safe_int(x.get("加油里程")) for x in st.session_state.fuel_logs] + \
@@ -177,7 +190,7 @@ vol_after_today = max(0.0, curr_vol - used_vol_since_fuel)
 
 # ================= 尿素消耗運算 =================
 sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
-urea_with_mil = [u for u in sorted_urea if "添加當下里程" in u and str(u["添加當下里程"]).isdigit()]
+urea_with_mil = [u for u in sorted_urea if str(u.get("添加當下里程", "")).isdigit()]
 urea_with_mil = sorted(urea_with_mil, key=lambda x: safe_int(x["添加當下里程"]))
 
 urea_km_l = 170.0 
@@ -234,7 +247,6 @@ def generate_kertz_excel(year: int, month: int):
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
-    # 物理極限還原：上方約2公分(~0.8吋)，左右約1公分(~0.4吋)
     ws.page_margins.top = 0.8
     ws.page_margins.bottom = 0.5
     ws.page_margins.left = 0.4
@@ -249,20 +261,13 @@ def generate_kertz_excel(year: int, month: int):
                 right_side = thin if c == c_end else None
                 ws.cell(row=r, column=c).border = Border(top=top_side, bottom=bot_side, left=left_side, right=right_side)
 
-    # 1. 執行標準區塊合併
     merges = [
-        (1, 1, 1, 7), # A1:G1
-        (1, 8, 1, 9), # H1:I1
-        (2, 1, 2, 2), # A2:B2
-        (2, 3, 2, 7), # C2:G2
-        (2, 8, 2, 9), # H2:I2
-        (3, 1, 3, 9), # A3:I3 (大一統合併，沒有內線干擾)
+        (1, 1, 1, 7), (1, 8, 1, 9), (2, 1, 2, 2), (2, 3, 2, 7), (2, 8, 2, 9), (3, 1, 3, 9)
     ]
     for r1, c1, r2, c2 in merges:
         ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
         apply_outer_border(ws, r1, c1, r2, c2)
 
-    # 第 1 列
     ws["A1"] = "KT.T. Pro Clean Tech  科治新技股份有限公司 標準作業表格"
     ws["A1"].font = font_bold_md
     ws["A1"].alignment = align_center
@@ -271,7 +276,6 @@ def generate_kertz_excel(year: int, month: int):
     ws["H1"].font = font_header_sub
     ws["H1"].alignment = align_left
     
-    # 第 2 列
     ws["A2"] = "表格名稱"
     ws["A2"].font = Font(name=font_family, size=12)
     ws["A2"].alignment = align_center
@@ -284,13 +288,11 @@ def generate_kertz_excel(year: int, month: int):
     ws["H2"].font = Font(name=font_family, size=10)
     ws["H2"].alignment = align_left
 
-    # 第 3 列：大通鋪橫排
     roc_year = year - 1911
     ws["A3"] = f"  行車日誌               月份： {roc_year} 年 {month} 月          車牌號碼： {DEFAULT_PLATE}          保管人： {DEFAULT_KEEPER}"
     ws["A3"].font = font_bold_md
     ws["A3"].alignment = align_left 
 
-    # 第 4 列：標題置中
     headers = ["日期", "使用人", "目的地", "出發時間", "出發里程數", "返廠時間", "返廠里程數", "加油里程數", "加油費用"]
     for col_idx, text in enumerate(headers, start=1):
         cell = ws.cell(row=4, column=col_idx, value=text)
@@ -304,9 +306,14 @@ def generate_kertz_excel(year: int, month: int):
     prefix = f"{year:04d}-{month:02d}"
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
     m_logs = sorted(m_logs, key=lambda x: str(x.get("日期", "")))
-    f_map = {str(fl["加油日期"]): fl for fl in st.session_state.fuel_logs if str(fl.get("加油日期", "")).startswith(prefix)}
+    
+    # 【Bug 3 修復】：解決同一天出車兩次時，加油紀錄會重複印出的問題
+    f_map_grouped = {}
+    for fl in st.session_state.fuel_logs:
+        d_str = str(fl.get("加油日期", "")).strip()
+        if d_str.startswith(prefix):
+            f_map_grouped.setdefault(d_str, []).append(fl)
 
-    # 資料填寫（31列滿版）
     start_row = 5
     for i in range(31):
         curr_row = start_row + i
@@ -325,9 +332,9 @@ def generate_kertz_excel(year: int, month: int):
             ws.cell(row=curr_row, column=6, value=str(log.get("返廠時間", ""))).alignment = align_center
             ws.cell(row=curr_row, column=7, value=safe_int(log.get("返廠里程"))).alignment = align_right
             
-            # 【Bug 1 修復】：改用 pop() 抽單，同日多趟出車加油不會重複印出
-            if log["日期"] in f_map:
-                fl = f_map.pop(log["日期"])
+            # 使用 pop(0) 消耗掉配對成功的加油紀錄，不再影分身
+            if log["日期"] in f_map_grouped and f_map_grouped[log["日期"]]:
+                fl = f_map_grouped[log["日期"]].pop(0)
                 ws.cell(row=curr_row, column=8, value=safe_int(fl.get("加油里程"))).alignment = align_right
                 ws.cell(row=curr_row, column=9, value=safe_int(fl.get("加油費用"))).alignment = align_right
         
@@ -338,11 +345,10 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    # ================= 嚴格實體單比例：B欄寬、C欄窄 =================
     col_widths = {
-        "A": 5.0,   # 日期（極窄）
-        "B": 15.0,  # 使用人（寬，符合簽名蓋章空間）
-        "C": 8.5,   # 目的地（窄）
+        "A": 5.0,   # 日期
+        "B": 15.0,  # 使用人
+        "C": 8.5,   # 目的地
         "D": 10.5,  # 出發時間
         "E": 12.0,  # 出發里程數
         "F": 10.5,  # 返廠時間
@@ -373,7 +379,7 @@ st.markdown("""
 </style>
 <div class='main-title'>380-S2 車隊管理</div>
 """, unsafe_allow_html=True)
-st.caption("連線狀態：🟢 Google Sheets 雲端連線成功")
+st.caption("連線狀態：🟢 Google Sheets 雲端連線成功 (極速快取模式啟動)")
 
 # ================= 綜合提醒儀表板 =================
 svc_color = "#00c04b" if "月" not in est_service_date else "gray"
@@ -422,8 +428,7 @@ with tab_daily:
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             f_start_time = st.text_input("出發時間", value="07:20")
-            # 【Bug 2 修復】：拔除 disabled=True，讓你可以隨時補登或微調出發里程
-            f_start_mil = st.number_input("出發里程 (預設前次，可微調)", value=int(latest_return_mileage), step=1)
+            f_start_mil = st.number_input("出發里程 (預設前次，可手動修改)", value=int(latest_return_mileage), step=1)
         with col_t2:
             f_ret_time = st.text_input("返廠時間", value=now_time.strftime("%H:%M"))
             def_return = latest_return_mileage + 23 if "順益" in f_dest_select else latest_return_mileage + 170
@@ -448,6 +453,7 @@ with tab_daily:
             else:
                 st.session_state.sys_msg = f"✅ {f_date.strftime('%m/%d')} 的紀錄已寫入 Google Sheets！"
                 st.session_state.sys_msg_type = "success"
+            st.session_state.force_refresh = True # 強制刷新快取鎖
             st.rerun()
 
 with tab_history:
@@ -491,11 +497,13 @@ with tab_history:
                         ws_daily.update(values=[updated_row], range_name=f"A{target_row_num}:H{target_row_num}")
                         st.session_state.sys_msg = "✅ 日常紀錄已更新！"
                         st.session_state.sys_msg_type = "success"
+                        st.session_state.force_refresh = True
                         st.rerun()
                     if btn_delete:
                         ws_daily.delete_rows(target_row_num)
                         st.session_state.sys_msg = "🗑️ 該筆紀錄已刪除！"
                         st.session_state.sys_msg_type = "warning"
+                        st.session_state.force_refresh = True
                         st.rerun()
 
     elif edit_mode == "柴油紀錄":
@@ -522,24 +530,30 @@ with tab_history:
                     ws_fuel.update(values=[upd_row], range_name=f"A{target_row_num}:F{target_row_num}")
                     st.session_state.sys_msg = "✅ 柴油紀錄已更新！"
                     st.session_state.sys_msg_type = "success"
+                    st.session_state.force_refresh = True
                     st.rerun()
                 if btn_del:
                     ws_fuel.delete_rows(target_row_num)
                     st.session_state.sys_msg = "🗑️ 柴油紀錄已刪除！"
                     st.session_state.sys_msg_type = "warning"
+                    st.session_state.force_refresh = True
                     st.rerun()
 
     elif edit_mode == "尿素紀錄":
+        # 【Bug 1 修復】：拔除 [None] 錯誤，相容雲端可能發生的空白列或缺 Key 現象
         if not st.session_state.urea_logs: st.info("目前沒有尿素資料")
         else:
-            log_options = [(idx + 2, f"[{log.get('添加日期')}] {log.get('公升數')}L (里程: {log.get('添加當下里程', '未填')})", log) for idx, log in enumerate(st.session_state.urea_logs)]
+            def get_urea_date(log):
+                return log.get('添加日期') or log.get('日期') or '未填'
+
+            log_options = [(idx + 2, f"[{get_urea_date(log)}] {log.get('公升數', 0)}L (里程: {log.get('添加當下里程', '未填')})", log) for idx, log in enumerate(st.session_state.urea_logs)]
             log_options = sorted(log_options, key=lambda x: str(x[2].get('添加日期', '')), reverse=True)
             
             selected_label = st.selectbox("✏️ 選擇要修改的尿素紀錄", [item[1] for item in log_options])
             target_row_num, _, target_log = next(item for item in log_options if item[1] == selected_label)
             
             with st.form("edit_urea_form"):
-                e_ud = st.date_input("添加日期", parse_date_safe(target_log.get("添加日期"), TODAY))
+                e_ud = st.date_input("添加日期", parse_date_safe(get_urea_date(target_log), TODAY))
                 e_um = st.number_input("添加當下里程", value=safe_int(target_log.get("添加當下里程")), step=1)
                 e_ul = st.number_input("公升數 (L)", value=safe_float(target_log.get("公升數")), step=1.0)
                 e_uc = st.number_input("費用 (元)", value=safe_int(target_log.get("費用")), step=1)
@@ -553,11 +567,13 @@ with tab_history:
                     ws_urea.update(values=[upd_row], range_name=f"A{target_row_num}:F{target_row_num}")
                     st.session_state.sys_msg = "✅ 尿素紀錄已更新！"
                     st.session_state.sys_msg_type = "success"
+                    st.session_state.force_refresh = True
                     st.rerun()
                 if btn_del:
                     ws_urea.delete_rows(target_row_num)
                     st.session_state.sys_msg = "🗑️ 尿素紀錄已刪除！"
                     st.session_state.sys_msg_type = "warning"
+                    st.session_state.force_refresh = True
                     st.rerun()
 
 with tab_stats:
@@ -673,6 +689,7 @@ with tab_stats:
                     
                 st.session_state.sys_msg = f"✅ 【{' ＋ '.join(msg_list)}】補給紀錄已成功寫入 Google Sheets！"
                 st.session_state.sys_msg_type = "success"
+                st.session_state.force_refresh = True
                 st.rerun()
 
 with tab_export:
@@ -705,4 +722,5 @@ with tab_settings:
             st.session_state.service_target = new_target
             st.session_state.sys_msg = "✅ 所有保養與檢驗目標已更新並存入雲端！"
             st.session_state.sys_msg_type = "success"
+            st.session_state.force_refresh = True
             st.rerun()
