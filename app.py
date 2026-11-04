@@ -234,7 +234,7 @@ def generate_kertz_excel(year: int, month: int):
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
-    # 精準實體紙本邊距：上方約2cm (~0.8吋)，左右約1cm (~0.4吋)
+    # 物理極限還原：上方約2公分(~0.8吋)，左右約1公分(~0.4吋)
     ws.page_margins.top = 0.8
     ws.page_margins.bottom = 0.5
     ws.page_margins.left = 0.4
@@ -256,7 +256,7 @@ def generate_kertz_excel(year: int, month: int):
         (2, 1, 2, 2), # A2:B2
         (2, 3, 2, 7), # C2:G2
         (2, 8, 2, 9), # H2:I2
-        (3, 1, 3, 9), # A3:I3
+        (3, 1, 3, 9), # A3:I3 (大一統合併，沒有內線干擾)
     ]
     for r1, c1, r2, c2 in merges:
         ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
@@ -325,8 +325,9 @@ def generate_kertz_excel(year: int, month: int):
             ws.cell(row=curr_row, column=6, value=str(log.get("返廠時間", ""))).alignment = align_center
             ws.cell(row=curr_row, column=7, value=safe_int(log.get("返廠里程"))).alignment = align_right
             
+            # 【Bug 1 修復】：改用 pop() 抽單，同日多趟出車加油不會重複印出
             if log["日期"] in f_map:
-                fl = f_map[log["日期"]]
+                fl = f_map.pop(log["日期"])
                 ws.cell(row=curr_row, column=8, value=safe_int(fl.get("加油里程"))).alignment = align_right
                 ws.cell(row=curr_row, column=9, value=safe_int(fl.get("加油費用"))).alignment = align_right
         
@@ -421,11 +422,12 @@ with tab_daily:
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             f_start_time = st.text_input("出發時間", value="07:20")
-            f_start_mil = st.number_input("出發里程 (鎖定前次)", value=latest_return_mileage, disabled=True)
+            # 【Bug 2 修復】：拔除 disabled=True，讓你可以隨時補登或微調出發里程
+            f_start_mil = st.number_input("出發里程 (預設前次，可微調)", value=int(latest_return_mileage), step=1)
         with col_t2:
             f_ret_time = st.text_input("返廠時間", value=now_time.strftime("%H:%M"))
             def_return = latest_return_mileage + 23 if "順益" in f_dest_select else latest_return_mileage + 170
-            f_ret_mil = st.number_input("返廠里程 (請看儀表板輸入)", value=def_return, step=1)
+            f_ret_mil = st.number_input("返廠里程 (請看儀表板輸入)", value=int(def_return), step=1)
 
         submit_daily = st.form_submit_button("💾 儲存今日紀錄，同步至雲端", use_container_width=True)
         
