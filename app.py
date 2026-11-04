@@ -93,7 +93,7 @@ daily_map = {"日期": ["日期", "時間", "紀錄日期"], "使用人": ["使�
 fuel_map = {"加油日期": ["加油日期", "日期", "紀錄日期"], "加油時間": ["加油時間", "時間", "紀錄時間"], "加油里程": ["加油里程", "里程", "當下里程", "紀錄里程"], "公升數": ["公升數", "公升"], "加油費用": ["加油費用", "費用", "金額", "實付金額", "柴油費用"], "加油站名": ["加油站名", "加油站", "站名"]}
 urea_map = {"添加日期": ["添加日期", "日期", "加油日期", "紀錄日期"], "添加時間": ["添加時間", "時間", "紀錄時間"], "公升數": ["公升數", "公升", "添加量"], "費用": ["費用", "金額", "實付金額", "尿素費用"], "備註": ["備註", "說明"], "添加當下里程": ["添加當下里程", "添加里程", "里程", "當下里程", "紀錄里程"]}
 
-# ================= 🚀 第二層快取：只在必要時向 Google 抓資料 =================
+# ================= 🚀 快取：只在必要時向 Google 抓資料 =================
 @st.cache_data(ttl=600, show_spinner="連線雲端同步中...")
 def fetch_all_data():
     client = get_gspread_client()
@@ -214,7 +214,7 @@ used_km_since_fuel = max(0, latest_return_mileage - latest_fuel_mileage)
 used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
 vol_after_today = max(0.0, curr_vol - used_vol_since_fuel)
 
-# 尿素消耗運算
+# ================= 尿素消耗運算 =================
 sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
 urea_with_mil = [u for u in sorted_urea if str(u.get("添加當下里程", "")).isdigit()]
 urea_with_mil = sorted(urea_with_mil, key=lambda x: safe_int(x["添加當下里程"]))
@@ -555,7 +555,7 @@ with tab_history:
                 target_row_num, list_idx, target_log = next((item[0], item[0]-2, item[2]) for item in log_options if item[1] == selected_label)
                 
                 with st.form("edit_fuel_form"):
-                    e_fd = date_input("加油日期", parse_date_safe(target_log.get("加油日期"), TODAY))
+                    e_fd = st.date_input("加油日期", parse_date_safe(target_log.get("加油日期"), TODAY))
                     e_fm = st.number_input("加油里程", value=safe_int(target_log.get("加油里程")), step=1)
                     e_fl = st.number_input("公升數 (L)", value=safe_float(target_log.get("公升數")), step=0.1)
                     e_fc = st.number_input("費用 (元)", value=safe_int(target_log.get("加油費用")), step=1)
@@ -638,7 +638,9 @@ with tab_stats:
     else: st.caption("累積滿 3 次加油紀錄後，將自動啟動硬體異常防呆雷達。")
 
     st.divider()
-    st.subheader("📊 未來進站預測引擎 (絕對里程防呆)")
+    # 【UI 修復】：合併兩個累贅的標題，直接改成一個清爽的 Subheader
+    st.subheader("📊 智慧進站預測 (依車上里程表為準)")
+    
     if urea_km_l > 1.0 and global_fuel_km_l > 0.1 and avg_daily_km > 1.0:
         safe_fuel_vol = 60 / global_fuel_km_l
         usable_fuel_vol = max(0, vol_after_today - safe_fuel_vol)
@@ -651,8 +653,6 @@ with tab_stats:
 
         target_fuel_mil = latest_return_mileage + math.floor(fuel_runnable_km)
         target_urea_mil = latest_return_mileage + math.floor(urea_runnable_km)
-
-        st.markdown("### 🔄 智慧進站策略 (看里程表最準！)")
         
         if urea_runnable_km >= fuel_runnable_km:
             default_station_mil = target_fuel_mil
