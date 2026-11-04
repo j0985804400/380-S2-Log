@@ -89,7 +89,6 @@ daily_map = {"日期": ["日期", "時間", "紀錄日期"], "使用人": ["使�
 fuel_map = {"加油日期": ["加油日期", "日期", "紀錄日期"], "加油時間": ["加油時間", "時間", "紀錄時間"], "加油里程": ["加油里程", "里程", "當下里程", "紀錄里程"], "公升數": ["公升數", "公升"], "加油費用": ["加油費用", "費用", "金額", "實付金額", "柴油費用"], "加油站名": ["加油站名", "加油站", "站名"]}
 urea_map = {"添加日期": ["添加日期", "日期", "加油日期", "紀錄日期"], "添加時間": ["添加時間", "時間", "紀錄時間"], "公升數": ["公升數", "公升", "添加量"], "費用": ["費用", "金額", "實付金額", "尿素費用"], "備註": ["備註", "說明"], "添加當下里程": ["添加當下里程", "添加里程", "里程", "當下里程", "紀錄里程"]}
 
-# 第二層快取：只在強制刷新時向 Google 請求
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_all_data_from_google():
     raw_settings = sh.worksheet("Settings").get_all_values()
@@ -259,10 +258,8 @@ def generate_kertz_excel(year: int, month: int):
     thin = Side(border_style="thin", color="000000")
     border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
     
-    # 關閉自動換行，強制完全置中
     align_center = Alignment(horizontal="center", vertical="center", wrap_text=False)
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
-    # 【Bug 修復】：補回被我手殘刪掉的靠右對齊設定，解決崩潰問題！
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
     ws.page_margins.top = 0.8
@@ -518,78 +515,100 @@ with tab_history:
                         fetch_all_data_from_google.clear()
                         st.rerun()
 
+    # 【UX 邏輯統一修復】加入「先選月份，再選該月紀錄」的過濾引擎
     elif edit_mode == "柴油紀錄":
         if not st.session_state.fuel_logs: st.info("目前沒有柴油資料")
         else:
-            log_options = [(idx + 2, f"[{log.get('加油日期')}] {log.get('加油站名')} - {log.get('公升數')}L (里程: {log.get('加油里程')})", log) for idx, log in enumerate(st.session_state.fuel_logs)]
+            all_months = sorted(list(set([str(log.get('加油日期', ''))[:7] for log in st.session_state.fuel_logs if log.get('加油日期')])), reverse=True)
+            selected_month = st.selectbox("📅 第一步：選擇月份", all_months, key="hist_m2")
+            
+            log_options = []
+            for idx, log in enumerate(st.session_state.fuel_logs):
+                if str(log.get('加油日期', '')).startswith(selected_month):
+                    log_options.append((idx + 2, f"[{log.get('加油日期')}] {log.get('加油站名')} - {log.get('公升數')}L (里程: {log.get('加油里程')})", log))
             log_options = sorted(log_options, key=lambda x: str(x[2].get('加油日期', '')), reverse=True)
             
-            selected_label = st.selectbox("✏️ 選擇要修改的柴油紀錄", [item[1] for item in log_options])
-            target_row_num, _, target_log = next(item for item in log_options if item[1] == selected_label)
-            
-            with st.form("edit_fuel_form"):
-                e_fd = st.date_input("加油日期", parse_date_safe(target_log.get("加油日期"), TODAY))
-                e_fm = st.number_input("加油里程", value=safe_int(target_log.get("加油里程")), step=1)
-                e_fl = st.number_input("公升數 (L)", value=safe_float(target_log.get("公升數")), step=0.1)
-                e_fc = st.number_input("費用 (元)", value=safe_int(target_log.get("加油費用")), step=1)
+            if not log_options: st.warning("該月份無紀錄")
+            else:
+                selected_label = st.selectbox("✏️ 第二步：選擇要修改的柴油紀錄", [item[1] for item in log_options])
+                target_row_num, _, target_log = next(item for item in log_options if item[1] == selected_label)
                 
-                c_btn1, c_btn2 = st.columns(2)
-                with c_btn1: btn_save = st.form_submit_button("💾 儲存修改", use_container_width=True)
-                with c_btn2: btn_del = st.form_submit_button("🗑️ 刪除", use_container_width=True)
-                
-                if btn_save:
-                    upd_row = [e_fd.strftime("%Y-%m-%d"), target_log.get("加油時間", ""), int(e_fm), float(e_fl), int(e_fc), target_log.get("加油站名", "")]
-                    ws_fuel.update(range_name=f"A{target_row_num}:F{target_row_num}", values=[upd_row])
-                    st.session_state.sys_msg = "✅ 柴油紀錄已更新！"
-                    st.session_state.sys_msg_type = "success"
-                    st.session_state.force_refresh = True
-                    fetch_all_data_from_google.clear()
-                    st.rerun()
-                if btn_del:
-                    ws_fuel.delete_rows(target_row_num)
-                    st.session_state.sys_msg = "🗑️ 柴油紀錄已刪除！"
-                    st.session_state.sys_msg_type = "warning"
-                    st.session_state.force_refresh = True
-                    fetch_all_data_from_google.clear()
-                    st.rerun()
+                with st.form("edit_fuel_form"):
+                    e_fd = st.date_input("加油日期", parse_date_safe(target_log.get("加油日期"), TODAY))
+                    e_fm = st.number_input("加油里程", value=safe_int(target_log.get("加油里程")), step=1)
+                    e_fl = st.number_input("公升數 (L)", value=safe_float(target_log.get("公升數")), step=0.1)
+                    e_fc = st.number_input("費用 (元)", value=safe_int(target_log.get("加油費用")), step=1)
+                    
+                    c_btn1, c_btn2 = st.columns(2)
+                    with c_btn1: btn_save = st.form_submit_button("💾 儲存修改", use_container_width=True)
+                    with c_btn2: btn_del = st.form_submit_button("🗑️ 刪除", use_container_width=True)
+                    
+                    if btn_save:
+                        upd_row = [e_fd.strftime("%Y-%m-%d"), target_log.get("加油時間", ""), int(e_fm), float(e_fl), int(e_fc), target_log.get("加油站名", "")]
+                        ws_fuel.update(range_name=f"A{target_row_num}:F{target_row_num}", values=[upd_row])
+                        st.session_state.sys_msg = "✅ 柴油紀錄已更新！"
+                        st.session_state.sys_msg_type = "success"
+                        st.session_state.force_refresh = True
+                        fetch_all_data_from_google.clear()
+                        st.rerun()
+                    if btn_del:
+                        ws_fuel.delete_rows(target_row_num)
+                        st.session_state.sys_msg = "🗑️ 柴油紀錄已刪除！"
+                        st.session_state.sys_msg_type = "warning"
+                        st.session_state.force_refresh = True
+                        fetch_all_data_from_google.clear()
+                        st.rerun()
 
+    # 【UX 邏輯統一修復】加入「先選月份，再選該月紀錄」的過濾引擎
     elif edit_mode == "尿素紀錄":
         if not st.session_state.urea_logs: st.info("目前沒有尿素資料")
         else:
             def get_urea_date(log):
                 return log.get('添加日期') or log.get('日期') or log.get('紀錄日期') or '未填'
 
-            log_options = [(idx + 2, f"[{get_urea_date(log)}] {log.get('公升數', 0)}L (里程: {log.get('添加當下里程', '未填')})", log) for idx, log in enumerate(st.session_state.urea_logs)]
-            log_options = sorted(log_options, key=lambda x: str(x[2].get('添加日期', '')), reverse=True)
+            valid_dates = [get_urea_date(log) for log in st.session_state.urea_logs if get_urea_date(log) != '未填']
+            all_months = sorted(list(set([d[:7] for d in valid_dates])), reverse=True)
+            if not all_months: all_months = ["未填"]
             
-            selected_label = st.selectbox("✏️ 選擇要修改的尿素紀錄", [item[1] for item in log_options])
-            target_row_num, _, target_log = next(item for item in log_options if item[1] == selected_label)
+            selected_month = st.selectbox("📅 第一步：選擇月份", all_months, key="hist_m3")
             
-            with st.form("edit_urea_form"):
-                e_ud = st.date_input("添加日期", parse_date_safe(get_urea_date(target_log), TODAY))
-                e_um = st.number_input("添加當下里程", value=safe_int(target_log.get("添加當下里程")), step=1)
-                e_ul = st.number_input("公升數 (L)", value=safe_float(target_log.get("公升數")), step=1.0)
-                e_uc = st.number_input("費用 (元)", value=safe_int(target_log.get("費用")), step=1)
+            log_options = []
+            for idx, log in enumerate(st.session_state.urea_logs):
+                u_date = get_urea_date(log)
+                if u_date.startswith(selected_month) or (selected_month == "未填" and u_date == "未填"):
+                    log_options.append((idx + 2, f"[{u_date}] {log.get('公升數', 0)}L (里程: {log.get('添加當下里程', '未填')})", log))
+            log_options = sorted(log_options, key=lambda x: get_urea_date(x[2]), reverse=True)
+            
+            if not log_options: st.warning("該月份無紀錄")
+            else:
+                selected_label = st.selectbox("✏️ 第二步：選擇要修改的尿素紀錄", [item[1] for item in log_options])
+                target_row_num, _, target_log = next(item for item in log_options if item[1] == selected_label)
                 
-                c_btn1, c_btn2 = st.columns(2)
-                with c_btn1: btn_save = st.form_submit_button("💾 儲存修改", use_container_width=True)
-                with c_btn2: btn_del = st.form_submit_button("🗑️ 刪除", use_container_width=True)
-                
-                if btn_save:
-                    upd_row = [e_ud.strftime("%Y-%m-%d"), target_log.get("添加時間", ""), float(e_ul), int(e_uc), target_log.get("備註", ""), int(e_um)]
-                    ws_urea.update(range_name=f"A{target_row_num}:F{target_row_num}", values=[upd_row])
-                    st.session_state.sys_msg = "✅ 尿素紀錄已更新！"
-                    st.session_state.sys_msg_type = "success"
-                    st.session_state.force_refresh = True
-                    fetch_all_data_from_google.clear()
-                    st.rerun()
-                if btn_del:
-                    ws_urea.delete_rows(target_row_num)
-                    st.session_state.sys_msg = "🗑️ 尿素紀錄已刪除！"
-                    st.session_state.sys_msg_type = "warning"
-                    st.session_state.force_refresh = True
-                    fetch_all_data_from_google.clear()
-                    st.rerun()
+                with st.form("edit_urea_form"):
+                    e_ud = st.date_input("添加日期", parse_date_safe(get_urea_date(target_log), TODAY))
+                    e_um = st.number_input("添加當下里程", value=safe_int(target_log.get("添加當下里程")), step=1)
+                    e_ul = st.number_input("公升數 (L)", value=safe_float(target_log.get("公升數")), step=1.0)
+                    e_uc = st.number_input("費用 (元)", value=safe_int(target_log.get("費用")), step=1)
+                    
+                    c_btn1, c_btn2 = st.columns(2)
+                    with c_btn1: btn_save = st.form_submit_button("💾 儲存修改", use_container_width=True)
+                    with c_btn2: btn_del = st.form_submit_button("🗑️ 刪除", use_container_width=True)
+                    
+                    if btn_save:
+                        upd_row = [e_ud.strftime("%Y-%m-%d"), target_log.get("添加時間", ""), float(e_ul), int(e_uc), target_log.get("備註", ""), int(e_um)]
+                        ws_urea.update(range_name=f"A{target_row_num}:F{target_row_num}", values=[upd_row])
+                        st.session_state.sys_msg = "✅ 尿素紀錄已更新！"
+                        st.session_state.sys_msg_type = "success"
+                        st.session_state.force_refresh = True
+                        fetch_all_data_from_google.clear()
+                        st.rerun()
+                    if btn_del:
+                        ws_urea.delete_rows(target_row_num)
+                        st.session_state.sys_msg = "🗑️ 尿素紀錄已刪除！"
+                        st.session_state.sys_msg_type = "warning"
+                        st.session_state.force_refresh = True
+                        fetch_all_data_from_google.clear()
+                        st.rerun()
 
 with tab_stats:
     default_station_mil = latest_return_mileage
