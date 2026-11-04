@@ -55,8 +55,7 @@ if selected_vehicle != "380-S2":
     st.warning("⚠️ 此車輛資料庫尚未建置，請先切回 380-S2")
     st.stop()
 
-# ================= 【核心修復】Google API 連線池快取化 =================
-# 這裡最關鍵：快取 Google 憑證，24 小時內不管你點幾百次，都不會再去吵 Google 認證主機！
+# ================= Google API 連線池快取化 =================
 @st.cache_resource(ttl=86400)
 def get_gspread_client():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -94,7 +93,7 @@ daily_map = {"日期": ["日期", "時間", "紀錄日期"], "使用人": ["使�
 fuel_map = {"加油日期": ["加油日期", "日期", "紀錄日期"], "加油時間": ["加油時間", "時間", "紀錄時間"], "加油里程": ["加油里程", "里程", "當下里程", "紀錄里程"], "公升數": ["公升數", "公升"], "加油費用": ["加油費用", "費用", "金額", "實付金額", "柴油費用"], "加油站名": ["加油站名", "加油站", "站名"]}
 urea_map = {"添加日期": ["添加日期", "日期", "加油日期", "紀錄日期"], "添加時間": ["添加時間", "時間", "紀錄時間"], "公升數": ["公升數", "公升", "添加量"], "費用": ["費用", "金額", "實付金額", "尿素費用"], "備註": ["備註", "說明"], "添加當下里程": ["添加當下里程", "添加里程", "里程", "當下里程", "紀錄里程"]}
 
-# ================= 🚀 第二層快取：只在必要時向 Google 抓資料 =================
+# ================= 🚀 快取：只在必要時向 Google 抓資料 =================
 @st.cache_data(ttl=600, show_spinner="連線雲端同步中...")
 def fetch_all_data():
     client = get_gspread_client()
@@ -274,10 +273,12 @@ def generate_kertz_excel(year: int, month: int):
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
+    # 邊界維持 1cm (左右0.4吋)，上方 2cm (0.8吋)
     ws.page_margins.top = 0.8
     ws.page_margins.bottom = 0.5
     ws.page_margins.left = 0.4
     ws.page_margins.right = 0.4
+    ws.print_options.horizontalCentered = True  # 【修正】：確保表格在頁面置中
 
     def apply_outer_border(ws, r_start, c_start, r_end, c_end):
         for r in range(r_start, r_end + 1):
@@ -325,8 +326,9 @@ def generate_kertz_excel(year: int, month: int):
         cell.alignment = align_center 
         cell.border = border_all
 
+    # 【修正】：下調列高，避免表格超出版面觸發 Excel「縮水等比縮放機制」
     for r in range(1, 5):
-        ws.row_dimensions[r].height = 28
+        ws.row_dimensions[r].height = 22 # 降高
 
     prefix = f"{year:04d}-{month:02d}"
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
@@ -341,7 +343,7 @@ def generate_kertz_excel(year: int, month: int):
     start_row = 5
     for i in range(31):
         curr_row = start_row + i
-        ws.row_dimensions[curr_row].height = 24.5
+        ws.row_dimensions[curr_row].height = 20 # 降高
         
         if i < len(m_logs):
             log = m_logs[i]
@@ -368,7 +370,18 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    col_widths = {"A": 5.0, "B": 15.0, "C": 8.5, "D": 10.5, "E": 12.0, "F": 10.5, "G": 12.0, "H": 12.0, "I": 10.5}
+    # 【修正】：微調橫向撐寬，確保填滿左右 1cm 空白
+    col_widths = {
+        "A": 5.0,
+        "B": 15.0,  
+        "C": 9.0,   
+        "D": 11.0,  
+        "E": 12.5,  
+        "F": 11.0,  
+        "G": 12.5,  
+        "H": 12.0,  
+        "I": 11.0   
+    }
     for col, width in col_widths.items(): ws.column_dimensions[col].width = width
 
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
@@ -454,8 +467,6 @@ with tab_daily:
                 f_date.strftime("%Y-%m-%d"), f_user, dest_final, 
                 f_start_time, int(f_start_mil), f_ret_time, int(f_ret_mil), ""
             ]
-            
-            # 【按鈕觸發連線】：只在按下按鈕時連線，絕不造成日常切換卡頓
             get_worksheet("Daily_Logs").append_row(new_row)
             
             new_rem_service = st.session_state.service_target - int(f_ret_mil)
@@ -471,7 +482,7 @@ with tab_daily:
                 st.session_state.sys_msg = f"✅ {f_date.strftime('%m/%d')} 的紀錄已寫入 Google Sheets！"
                 st.session_state.sys_msg_type = "success"
                 
-            fetch_all_data.clear() # 強制清除快取，下次重載
+            fetch_all_data.clear() 
             st.rerun()
 
 with tab_history:
