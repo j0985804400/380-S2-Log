@@ -64,11 +64,10 @@ except Exception as e:
     st.error(f"雲端連線異常，請檢查金鑰: {e}")
     st.stop()
 
-# 啟用強制刷新鎖：解決點擊卡頓問題
 if "force_refresh" not in st.session_state:
     st.session_state.force_refresh = True
 
-# ================= 智慧欄位名稱對齊引擎 (解決[未填]抓不到的問題) =================
+# ================= 智慧欄位名稱對齊引擎 (解決[未填]與0元的致命Bug) =================
 def normalize_records(records, mapping):
     norm_list = []
     for r in records:
@@ -86,9 +85,10 @@ def normalize_records(records, mapping):
         norm_list.append(nr)
     return norm_list
 
-daily_map = {"日期": ["日期", "時間"], "使用人": ["使用人", "駕駛"], "目的地": ["目的地", "地點"], "出發時間": ["出發時間"], "出發里程": ["出發里程", "出發里程數"], "返廠時間": ["返廠時間"], "返廠里程": ["返廠里程", "返廠里程數"], "備註": ["備註"]}
-fuel_map = {"加油日期": ["加油日期", "日期"], "加油時間": ["加油時間", "時間"], "加油里程": ["加油里程", "里程", "當下里程"], "公升數": ["公升數", "公升"], "加油費用": ["加油費用", "費用", "金額", "實付金額"], "加油站名": ["加油站名", "加油站", "站名"]}
-urea_map = {"添加日期": ["添加日期", "日期", "加油日期"], "添加時間": ["添加時間", "時間"], "公升數": ["公升數", "公升", "添加量"], "費用": ["費用", "金額", "實付金額"], "備註": ["備註", "說明"], "添加當下里程": ["添加當下里程", "添加里程", "里程", "當下里程"]}
+# 【關鍵修復】擴充字典：加入「紀錄日期」、「紀錄時間」、「尿素費用」等關鍵字，完美相容你的表單
+daily_map = {"日期": ["日期", "時間", "紀錄日期"], "使用人": ["使用人", "駕駛"], "目的地": ["目的地", "地點"], "出發時間": ["出發時間", "紀錄時間"], "出發里程": ["出發里程", "出發里程數"], "返廠時間": ["返廠時間"], "返廠里程": ["返廠里程", "返廠里程數"], "備註": ["備註"]}
+fuel_map = {"加油日期": ["加油日期", "日期", "紀錄日期"], "加油時間": ["加油時間", "時間", "紀錄時間"], "加油里程": ["加油里程", "里程", "當下里程", "紀錄里程"], "公升數": ["公升數", "公升"], "加油費用": ["加油費用", "費用", "金額", "實付金額", "柴油費用"], "加油站名": ["加油站名", "加油站", "站名"]}
+urea_map = {"添加日期": ["添加日期", "日期", "加油日期", "紀錄日期"], "添加時間": ["添加時間", "時間", "紀錄時間"], "公升數": ["公升數", "公升", "添加量"], "費用": ["費用", "金額", "實付金額", "尿素費用"], "備註": ["備註", "說明"], "添加當下里程": ["添加當下里程", "添加里程", "里程", "當下里程", "紀錄里程"]}
 
 def load_data():
     if st.session_state.force_refresh:
@@ -97,7 +97,8 @@ def load_data():
             if "Settings" not in sheet_titles:
                 ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
                 default_vals = [
-                    ["SERVICE_TARGET", 622000], ["FUEL_TANK_CAPACITY", 130.0],
+                    ["SERVICE_TARGET", 622000],
+                    ["FUEL_TANK_CAPACITY", 130.0],
                     ["NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d")],
                     ["NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d")]
                 ]
@@ -319,7 +320,6 @@ def generate_kertz_excel(year: int, month: int):
     m_logs = [l for l in st.session_state.daily_logs if str(l.get("日期", "")).startswith(prefix)]
     m_logs = sorted(m_logs, key=lambda x: str(x.get("日期", "")))
     
-    # 【Bug 修復】：抽單機制避免同日多趟時重複列印加油紀錄
     f_map_grouped = {}
     for fl in st.session_state.fuel_logs:
         d_str = str(fl.get("加油日期", "")).strip()
@@ -546,14 +546,17 @@ with tab_history:
     elif edit_mode == "尿素紀錄":
         if not st.session_state.urea_logs: st.info("目前沒有尿素資料")
         else:
-            log_options = [(idx + 2, f"[{log.get('添加日期', '未填')}] {log.get('公升數', 0)}L (里程: {log.get('添加當下里程', '未填')})", log) for idx, log in enumerate(st.session_state.urea_logs)]
+            def get_urea_date(log):
+                return log.get('添加日期') or log.get('日期') or '未填'
+
+            log_options = [(idx + 2, f"[{get_urea_date(log)}] {log.get('公升數', 0)}L (里程: {log.get('添加當下里程', '未填')})", log) for idx, log in enumerate(st.session_state.urea_logs)]
             log_options = sorted(log_options, key=lambda x: str(x[2].get('添加日期', '')), reverse=True)
             
             selected_label = st.selectbox("✏️ 選擇要修改的尿素紀錄", [item[1] for item in log_options])
             target_row_num, _, target_log = next(item for item in log_options if item[1] == selected_label)
             
             with st.form("edit_urea_form"):
-                e_ud = st.date_input("添加日期", parse_date_safe(target_log.get("添加日期"), TODAY))
+                e_ud = st.date_input("添加日期", parse_date_safe(get_urea_date(target_log), TODAY))
                 e_um = st.number_input("添加當下里程", value=safe_int(target_log.get("添加當下里程")), step=1)
                 e_ul = st.number_input("公升數 (L)", value=safe_float(target_log.get("公升數")), step=1.0)
                 e_uc = st.number_input("費用 (元)", value=safe_int(target_log.get("費用")), step=1)
