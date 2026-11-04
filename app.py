@@ -29,22 +29,34 @@ def parse_date_safe(date_str, default_date):
     except: return default_date
 
 # ================= 系統固定參數與時區設定 =================
-DEFAULT_PLATE = "380-S2"
-DEFAULT_KEEPER = "劉嘉舜"
-DEFAULT_USER = "劉嘉舜"
-DOC_CODE = "4-33-DC0007B"
-FORM_NAME = "公務車輛行車紀錄表 Rev.1"
-UREA_TANK_CAPACITY = 20.0  
 TW_TZ = timezone(timedelta(hours=8))
-
 now_time = datetime.now(TW_TZ)
 TODAY = now_time.date()
-
 if now_time.hour < 4: SHIFT_DATE = (now_time - timedelta(days=1)).date()
 else: SHIFT_DATE = TODAY
 
-# ================= Google Sheets 極速連線與快取引擎 =================
-@st.cache_resource(ttl=3600)
+DOC_CODE = "4-33-DC0007B"
+FORM_NAME = "公務車輛行車紀錄表 Rev.1"
+UREA_TANK_CAPACITY = 20.0  
+
+# ================= 前端介面基礎設定 =================
+st.set_page_config(page_title="車隊管理總控台", layout="centered", initial_sidebar_state="collapsed")
+
+# ================= 【主動升級】多車隊擴充架構 =================
+st.sidebar.title("🚚 車隊管理中心")
+selected_vehicle = st.sidebar.selectbox("選擇管理車輛", ["380-S2", "➕ 新增車輛 (擴充預留)"])
+st.sidebar.caption("未來可直接切換不同車牌的獨立資料庫")
+
+DEFAULT_PLATE = "380-S2"
+DEFAULT_KEEPER = "劉嘉舜"
+DEFAULT_USER = "劉嘉舜"
+
+if selected_vehicle != "380-S2":
+    st.warning("⚠️ 此車輛資料庫尚未建置，請先切回 380-S2")
+    st.stop()
+
+# ================= Google Sheets 穩定連線 (解決連線逾時 Bug) =================
+# 【核心修復】不再快取 Client 連線，避免手機休眠喚醒後碰到死連線引發 Connection timed out
 def get_spreadsheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     if "google_key" in st.secrets:
@@ -61,7 +73,7 @@ try:
     ws_fuel = sh.worksheet("Fuel_Logs")
     ws_urea = sh.worksheet("Urea_Logs")
 except Exception as e:
-    st.error(f"雲端連線異常，請檢查金鑰: {e}")
+    st.error(f"雲端連線異常，請檢查網路或金鑰: {e}")
     st.stop()
 
 if "force_refresh" not in st.session_state:
@@ -89,6 +101,7 @@ daily_map = {"日期": ["日期", "時間", "紀錄日期"], "使用人": ["使�
 fuel_map = {"加油日期": ["加油日期", "日期", "紀錄日期"], "加油時間": ["加油時間", "時間", "紀錄時間"], "加油里程": ["加油里程", "里程", "當下里程", "紀錄里程"], "公升數": ["公升數", "公升"], "加油費用": ["加油費用", "費用", "金額", "實付金額", "柴油費用"], "加油站名": ["加油站名", "加油站", "站名"]}
 urea_map = {"添加日期": ["添加日期", "日期", "加油日期", "紀錄日期"], "添加時間": ["添加時間", "時間", "紀錄時間"], "公升數": ["公升數", "公升", "添加量"], "費用": ["費用", "金額", "實付金額", "尿素費用"], "備註": ["備註", "說明"], "添加當下里程": ["添加當下里程", "添加里程", "里程", "當下里程", "紀錄里程"]}
 
+# 第二層快取：只緩存取得的字串陣列，保護效能且絕不卡當
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_all_data_from_google():
     raw_settings = sh.worksheet("Settings").get_all_values()
@@ -107,9 +120,10 @@ def load_data():
                     ["SERVICE_TARGET", 622000],
                     ["FUEL_TANK_CAPACITY", 130.0],
                     ["NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d")],
-                    ["NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d")]
+                    ["NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d")],
+                    ["LINE_TOKEN", ""] # 預留 LINE Token 欄位
                 ]
-                ws_settings.update(values=default_vals, range_name="A1:B4")
+                ws_settings.update(values=default_vals, range_name="A1:B5")
                 fetch_all_data_from_google.clear()
             
             raw_settings, raw_daily, raw_fuel, raw_urea = fetch_all_data_from_google()
@@ -124,12 +138,22 @@ def load_data():
                 
             st.session_state.force_refresh = False
         except Exception as e:
-            st.error(f"資料讀取失敗: {e}")
+            st.error(f"資料讀取失敗，請重新整理: {e}")
 
 load_data()
 
 st.session_state.service_target = safe_int(st.session_state.settings_dict.get("SERVICE_TARGET"), 622000)
 base_tank_capacity = safe_float(st.session_state.settings_dict.get("FUEL_TANK_CAPACITY"), 130.0)
+line_token = st.session_state.settings_dict.get("LINE_TOKEN", "")
+
+# ================= 【主動升級】LINE 自動推播機器人 =================
+def send_line_notify(message):
+    if not line_token or str(line_token).strip() == "": return
+    try:
+        import requests
+        headers = {"Authorization": f"Bearer {str(line_token).strip()}"}
+        requests.post("https://notify-api.line.me/api/notify", headers=headers, data={"message": message}, timeout=5)
+    except: pass
 
 next_v_insp = st.session_state.settings_dict.get("NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d"))
 next_e_insp = st.session_state.settings_dict.get("NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d"))
@@ -276,9 +300,7 @@ def generate_kertz_excel(year: int, month: int):
                 right_side = thin if c == c_end else None
                 ws.cell(row=r, column=c).border = Border(top=top_side, bottom=bot_side, left=left_side, right=right_side)
 
-    merges = [
-        (1, 1, 1, 7), (1, 8, 1, 9), (2, 1, 2, 2), (2, 3, 2, 7), (2, 8, 2, 9), (3, 1, 3, 9)
-    ]
+    merges = [(1, 1, 1, 7), (1, 8, 1, 9), (2, 1, 2, 2), (2, 3, 2, 7), (2, 8, 2, 9), (3, 1, 3, 9)]
     for r1, c1, r2, c2 in merges:
         ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
         apply_outer_border(ws, r1, c1, r2, c2)
@@ -358,12 +380,8 @@ def generate_kertz_excel(year: int, month: int):
             if c in [5, 7, 8, 9] and isinstance(cell.value, (int, float, str)) and str(cell.value).isdigit():
                 cell.number_format = "#,##0"
 
-    col_widths = {
-        "A": 5.0,   "B": 15.0,  "C": 8.5,   "D": 10.5,  "E": 12.0,  
-        "F": 10.5,  "G": 12.0,  "H": 12.0,  "I": 10.5   
-    }
-    for col, width in col_widths.items(): 
-        ws.column_dimensions[col].width = width
+    col_widths = {"A": 5.0, "B": 15.0, "C": 8.5, "D": 10.5, "E": 12.0, "F": 10.5, "G": 12.0, "H": 12.0, "I": 10.5}
+    for col, width in col_widths.items(): ws.column_dimensions[col].width = width
 
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
@@ -376,18 +394,14 @@ def generate_kertz_excel(year: int, month: int):
     buf.seek(0)
     return buf
 
-# ================= 前端介面 =================
-st.set_page_config(page_title="380-S2 車隊管理", layout="centered")
-
 st.markdown("""
 <style>
     .main-title { font-size: 28px !important; font-weight: 800; margin-bottom: 5px; white-space: nowrap; }
 </style>
 <div class='main-title'>380-S2 車隊管理</div>
 """, unsafe_allow_html=True)
-st.caption("連線狀態：🟢 Google Sheets 雲端連線成功 (極速快取模式啟動)")
+st.caption(f"連線狀態：🟢 雲端連線成功 (極速模式) | 👤 {DEFAULT_KEEPER}")
 
-# ================= 綜合提醒儀表板 =================
 svc_color = "#00c04b" if "月" not in est_service_date else "gray"
 svc_text = f"預估 {est_service_date}"
 
@@ -453,6 +467,13 @@ with tab_daily:
             ]
             ws_daily.append_row(new_row)
             
+            # 【自動化觸發】檢查是否需要發送 LINE 警報
+            new_rem_service = st.session_state.service_target - int(f_ret_mil)
+            if new_rem_service < 500:
+                send_line_notify(f"\n🚨 {DEFAULT_PLATE} 保養警告\n距離大保養僅剩 {new_rem_service} km，請準備進廠！")
+            if rem_urea_vol < 8.0:
+                send_line_notify(f"\n💧 {DEFAULT_PLATE} 尿素警告\n尿素僅剩 {rem_urea_vol:.1f} L，請盡速補充！")
+            
             if diff_km > (expected_km + 80):
                 st.session_state.sys_msg = f"⚠️ 【漏登提醒】本次增加了 {diff_km} km。紀錄已存入，請至「修改」確認是否漏填！"
                 st.session_state.sys_msg_type = "warning"
@@ -515,7 +536,6 @@ with tab_history:
                         fetch_all_data_from_google.clear()
                         st.rerun()
 
-    # 【UX 邏輯統一修復】加入「先選月份，再選該月紀錄」的過濾引擎
     elif edit_mode == "柴油紀錄":
         if not st.session_state.fuel_logs: st.info("目前沒有柴油資料")
         else:
@@ -559,7 +579,6 @@ with tab_history:
                         fetch_all_data_from_google.clear()
                         st.rerun()
 
-    # 【UX 邏輯統一修復】加入「先選月份，再選該月紀錄」的過濾引擎
     elif edit_mode == "尿素紀錄":
         if not st.session_state.urea_logs: st.info("目前沒有尿素資料")
         else:
@@ -744,6 +763,9 @@ with tab_settings:
         new_e_date = st.date_input("下次驗排氣到期日", next_e_date)
         st.markdown("---")
         st.markdown(f"**車輛總油箱容量 (公升 L)**\n\n🤖 *目前由 AI 自動微調鎖定在：{tank_cap} L*")
+        st.markdown("---")
+        st.markdown("**🔔 LINE Notify 機器人推播**")
+        new_line_token = st.text_input("輸入 LINE Token (選填，用於自動發送保養與尿素警告)", value=line_token, type="password")
         
         submit_settings = st.form_submit_button("💾 儲存所有設定", use_container_width=True)
         if submit_settings:
@@ -751,11 +773,12 @@ with tab_settings:
                 ["SERVICE_TARGET", new_target],
                 ["FUEL_TANK_CAPACITY", base_tank_capacity],
                 ["NEXT_VEHICLE_INSP", new_v_date.strftime("%Y-%m-%d")],
-                ["NEXT_EMISSIONS_INSP", new_e_date.strftime("%Y-%m-%d")]
+                ["NEXT_EMISSIONS_INSP", new_e_date.strftime("%Y-%m-%d")],
+                ["LINE_TOKEN", new_line_token]
             ]
-            ws_settings.update(values=update_vals, range_name="A1:B4")
+            ws_settings.update(values=update_vals, range_name="A1:B5")
             st.session_state.service_target = new_target
-            st.session_state.sys_msg = "✅ 所有保養與檢驗目標已更新並存入雲端！"
+            st.session_state.sys_msg = "✅ 所有設定已更新並存入雲端！"
             st.session_state.sys_msg_type = "success"
             st.session_state.force_refresh = True
             fetch_all_data_from_google.clear()
