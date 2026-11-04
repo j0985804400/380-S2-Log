@@ -248,13 +248,14 @@ rem_urea_vol = max(0.0, curr_urea_vol - used_urea_since_last)
 def calculate_service_prediction(target_mileage):
     km_remaining = target_mileage - latest_return_mileage
     if km_remaining <= 0: return "已達保養里程"
-    days_remaining = int(km_remaining / avg_daily_km)
+    # 【關鍵修正】採用 math.ceil 無條件進位，精準算出在路線中途耗盡的真實天數
+    days_remaining = math.ceil(km_remaining / avg_daily_km)
     est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
     return est_date.strftime("%m/%d")
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
 
-# ================= 1:1 行高極限特化 A4 報表生成 =================
+# ================= 1:1 終極物理換算 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -273,12 +274,11 @@ def generate_kertz_excel(year: int, month: int):
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
     align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
-    # 物理極限還原：上方 0.8吋(約2cm)，下收 0.3吋保留彈性，左右 0.4吋(約1cm)
     ws.page_margins.top = 0.8
     ws.page_margins.bottom = 0.3 
     ws.page_margins.left = 0.4
     ws.page_margins.right = 0.4
-    ws.print_options.horizontalCentered = True  # 確保印出來絕對置中
+    ws.print_options.horizontalCentered = True  
 
     def apply_outer_border(ws, r_start, c_start, r_end, c_end):
         for r in range(r_start, r_end + 1):
@@ -326,7 +326,6 @@ def generate_kertz_excel(year: int, month: int):
         cell.alignment = align_center 
         cell.border = border_all
 
-    # 【核心優化】標題列加高到 25，填補底部空白
     for r in range(1, 5):
         ws.row_dimensions[r].height = 25 
 
@@ -343,7 +342,6 @@ def generate_kertz_excel(year: int, month: int):
     start_row = 5
     for i in range(31):
         curr_row = start_row + i
-        # 【核心優化】資料列加高到 21.5，將 50 點的空白撐滿整張 A4
         ws.row_dimensions[curr_row].height = 21.5 
         
         if i < len(m_logs):
@@ -388,7 +386,6 @@ def generate_kertz_excel(year: int, month: int):
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
     ws.page_setup.fitToPage = True
     ws.page_setup.fitToWidth = 1
-    # 【核心優化】解除高度限制！告訴 Excel：「寬度幫我鎖死 1 頁，高度自然往下排就好」，根除縮水白邊
     ws.page_setup.fitToHeight = 0 
     
     buf = io.BytesIO()
@@ -660,7 +657,8 @@ with tab_stats:
         
         if urea_runnable_km >= fuel_runnable_km:
             default_station_mil = target_fuel_mil
-            target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(fuel_days_left))
+            # 【關鍵修正】採用無條件進位，精準算出在路線中途耗盡的真實天數
+            target_date = datetime.now(TW_TZ) + timedelta(days=math.ceil(fuel_days_left))
             future_urea_vol = rem_urea_vol - (fuel_runnable_km / urea_km_l)
             
             st.success(f"✅ **預估進站點 (柴油主導)：【 里程 {target_fuel_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
@@ -670,7 +668,7 @@ with tab_stats:
                 
         else:
             default_station_mil = target_urea_mil
-            target_date = datetime.now(TW_TZ) + timedelta(days=math.floor(urea_days_left))
+            target_date = datetime.now(TW_TZ) + timedelta(days=math.ceil(urea_days_left))
             future_fuel_vol = vol_after_today - (urea_runnable_km / global_fuel_km_l)
             
             st.error(f"🚨 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
