@@ -93,7 +93,7 @@ daily_map = {"日期": ["日期", "時間", "紀錄日期"], "使用人": ["使�
 fuel_map = {"加油日期": ["加油日期", "日期", "紀錄日期"], "加油時間": ["加油時間", "時間", "紀錄時間"], "加油里程": ["加油里程", "里程", "當下里程", "紀錄里程"], "公升數": ["公升數", "公升"], "加油費用": ["加油費用", "費用", "金額", "實付金額", "柴油費用"], "加油站名": ["加油站名", "加油站", "站名"]}
 urea_map = {"添加日期": ["添加日期", "日期", "加油日期", "紀錄日期"], "添加時間": ["添加時間", "時間", "紀錄時間"], "公升數": ["公升數", "公升", "添加量"], "費用": ["費用", "金額", "實付金額", "尿素費用"], "備註": ["備註", "說明"], "添加當下里程": ["添加當下里程", "添加里程", "里程", "當下里程", "紀錄里程"]}
 
-# ================= 🚀 快取：只在必要時向 Google 抓資料 =================
+# ================= 🚀 第二層快取：只在必要時向 Google 抓資料 =================
 @st.cache_data(ttl=600, show_spinner="連線雲端同步中...")
 def fetch_all_data():
     client = get_gspread_client()
@@ -155,7 +155,7 @@ all_recorded_mil = [safe_int(x.get("返廠里程")) for x in st.session_state.da
 latest_return_mileage = max(all_recorded_mil) if all_recorded_mil else 615215
 rem_service = st.session_state.service_target - latest_return_mileage
 
-# ================= 柴油消耗運算 =================
+# 柴油消耗運算
 sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: safe_int(x.get("加油里程", 0)))
 latest_fuel_mileage = safe_int(sorted_fuel_logs[-1].get("加油里程")) if sorted_fuel_logs else latest_return_mileage
 
@@ -214,7 +214,7 @@ used_km_since_fuel = max(0, latest_return_mileage - latest_fuel_mileage)
 used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
 vol_after_today = max(0.0, curr_vol - used_vol_since_fuel)
 
-# ================= 尿素消耗運算 =================
+# 尿素消耗運算
 sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
 urea_with_mil = [u for u in sorted_urea if str(u.get("添加當下里程", "")).isdigit()]
 urea_with_mil = sorted(urea_with_mil, key=lambda x: safe_int(x["添加當下里程"]))
@@ -248,14 +248,13 @@ rem_urea_vol = max(0.0, curr_urea_vol - used_urea_since_last)
 def calculate_service_prediction(target_mileage):
     km_remaining = target_mileage - latest_return_mileage
     if km_remaining <= 0: return "已達保養里程"
-    # 【關鍵修正】採用 math.ceil 無條件進位，精準算出在路線中途耗盡的真實天數
     days_remaining = math.ceil(km_remaining / avg_daily_km)
     est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
     return est_date.strftime("%m/%d")
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
 
-# ================= 1:1 終極物理換算 A4 報表生成 =================
+# ================= 1:1 行高極限特化 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -556,7 +555,7 @@ with tab_history:
                 target_row_num, list_idx, target_log = next((item[0], item[0]-2, item[2]) for item in log_options if item[1] == selected_label)
                 
                 with st.form("edit_fuel_form"):
-                    e_fd = st.date_input("加油日期", parse_date_safe(target_log.get("加油日期"), TODAY))
+                    e_fd = date_input("加油日期", parse_date_safe(target_log.get("加油日期"), TODAY))
                     e_fm = st.number_input("加油里程", value=safe_int(target_log.get("加油里程")), step=1)
                     e_fl = st.number_input("公升數 (L)", value=safe_float(target_log.get("公升數")), step=0.1)
                     e_fc = st.number_input("費用 (元)", value=safe_int(target_log.get("加油費用")), step=1)
@@ -657,7 +656,6 @@ with tab_stats:
         
         if urea_runnable_km >= fuel_runnable_km:
             default_station_mil = target_fuel_mil
-            # 【關鍵修正】採用無條件進位，精準算出在路線中途耗盡的真實天數
             target_date = datetime.now(TW_TZ) + timedelta(days=math.ceil(fuel_days_left))
             future_urea_vol = rem_urea_vol - (fuel_runnable_km / urea_km_l)
             
