@@ -43,9 +43,9 @@ TODAY = now_time.date()
 if now_time.hour < 4: SHIFT_DATE = (now_time - timedelta(days=1)).date()
 else: SHIFT_DATE = TODAY
 
-# ================= 🚀 第一層快取：綁定 Google 連線 (每小時只連一次) =================
+# ================= Google Sheets 極速連線與快取引擎 =================
 @st.cache_resource(ttl=3600)
-def get_google_sheets():
+def get_spreadsheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     if "google_key" in st.secrets:
         creds_dict = json.loads(st.secrets["google_key"])
@@ -53,50 +53,21 @@ def get_google_sheets():
     else:
         creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
     client = gspread.authorize(creds)
-    sh = client.open("380-S2_公務車行車紀錄系統")
-    
-    # 集中處理所有表格的定位，避免在外部重複呼叫 API 造成卡頓
-    sheet_titles = [w.title for w in sh.worksheets()]
-    if "Settings" not in sheet_titles:
-        ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
-        default_vals = [
-            ["SERVICE_TARGET", 622000],
-            ["FUEL_TANK_CAPACITY", 130.0],
-            ["NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d")],
-            ["NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d")]
-        ]
-        ws_settings.update(values=default_vals, range_name="A1:B4")
-    else:
-        ws_settings = sh.worksheet("Settings")
-
-    return {
-        "daily": sh.worksheet("Daily_Logs"),
-        "fuel": sh.worksheet("Fuel_Logs"),
-        "urea": sh.worksheet("Urea_Logs"),
-        "settings": ws_settings
-    }
+    return client.open("380-S2_公務車行車紀錄系統")
 
 try:
-    sheets = get_google_sheets()
-    ws_daily = sheets["daily"]
-    ws_fuel = sheets["fuel"]
-    ws_urea = sheets["urea"]
-    ws_settings = sheets["settings"]
+    sh = get_spreadsheet()
+    ws_daily = sh.worksheet("Daily_Logs")
+    ws_fuel = sh.worksheet("Fuel_Logs")
+    ws_urea = sh.worksheet("Urea_Logs")
 except Exception as e:
     st.error(f"雲端連線異常，請檢查金鑰: {e}")
     st.stop()
 
-# ================= 🚀 第二層快取：記憶體暫存大數據 (解決轉圈圈的終極武器) =================
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_all_data_from_google():
-    # 只要沒有人按儲存，10 分鐘內所有操作都從記憶體撈，速度小於 0.1 秒
-    raw_settings = ws_settings.get_all_values()
-    raw_daily = ws_daily.get_all_records()
-    raw_fuel = ws_fuel.get_all_records()
-    raw_urea = ws_urea.get_all_records()
-    return raw_settings, raw_daily, raw_fuel, raw_urea
+if "force_refresh" not in st.session_state:
+    st.session_state.force_refresh = True
 
-# ================= 智慧欄位名稱對齊引擎 (解決[未填]與0元的致命Bug) =================
+# ================= 智慧欄位名稱對齊引擎 =================
 def normalize_records(records, mapping):
     norm_list = []
     for r in records:
@@ -118,21 +89,43 @@ daily_map = {"日期": ["日期", "時間", "紀錄日期"], "使用人": ["使�
 fuel_map = {"加油日期": ["加油日期", "日期", "紀錄日期"], "加油時間": ["加油時間", "時間", "紀錄時間"], "加油里程": ["加油里程", "里程", "當下里程", "紀錄里程"], "公升數": ["公升數", "公升"], "加油費用": ["加油費用", "費用", "金額", "實付金額", "柴油費用"], "加油站名": ["加油站名", "加油站", "站名"]}
 urea_map = {"添加日期": ["添加日期", "日期", "加油日期", "紀錄日期"], "添加時間": ["添加時間", "時間", "紀錄時間"], "公升數": ["公升數", "公升", "添加量"], "費用": ["費用", "金額", "實付金額", "尿素費用"], "備註": ["備註", "說明"], "添加當下里程": ["添加當下里程", "添加里程", "里程", "當下里程", "紀錄里程"]}
 
+# 第二層快取：只在強制刷新時向 Google 請求
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_all_data_from_google():
+    raw_settings = sh.worksheet("Settings").get_all_values()
+    raw_daily = ws_daily.get_all_records()
+    raw_fuel = ws_fuel.get_all_records()
+    raw_urea = ws_urea.get_all_records()
+    return raw_settings, raw_daily, raw_fuel, raw_urea
+
 def load_data():
-    try:
-        raw_settings, raw_daily, raw_fuel, raw_urea = fetch_all_data_from_google()
-        
-        st.session_state.settings_dict = {row[0]: row[1] for row in raw_settings if len(row) >= 2}
-        
-        st.session_state.daily_logs = normalize_records(raw_daily, daily_map) if raw_daily else [{"日期": "2026-10-31", "使用人": "劉嘉舜", "目的地": "美光", "出發時間": "07:20", "出發里程": 615049, "返廠時間": "18:30", "返廠里程": 615215, "備註": "系統基準"}]
-        st.session_state.fuel_logs = normalize_records(raw_fuel, fuel_map) if raw_fuel else [{"加油日期": "2026-10-30", "加油時間": "18:40", "加油里程": 614997, "公升數": 130.0, "加油費用": 3816, "加油站名": "中油苗栗站"}]
-        st.session_state.urea_logs = normalize_records(raw_urea, urea_map) if raw_urea else [{"添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加", "添加當下里程": 614997}]
+    if st.session_state.force_refresh:
+        try:
+            sheet_titles = [w.title for w in sh.worksheets()]
+            if "Settings" not in sheet_titles:
+                ws_settings = sh.add_worksheet(title="Settings", rows=10, cols=2)
+                default_vals = [
+                    ["SERVICE_TARGET", 622000],
+                    ["FUEL_TANK_CAPACITY", 130.0],
+                    ["NEXT_VEHICLE_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(months=6)).strftime("%Y-%m-%d")],
+                    ["NEXT_EMISSIONS_INSP", (pd.to_datetime(TODAY) + pd.DateOffset(years=1)).strftime("%Y-%m-%d")]
+                ]
+                ws_settings.update(values=default_vals, range_name="A1:B4")
+                fetch_all_data_from_google.clear()
             
-        if "destinations" not in st.session_state:
-            st.session_state.destinations = ["美光", "順益", "廠內調度"]
-            
-    except Exception as e:
-        st.error(f"資料讀取失敗: {e}")
+            raw_settings, raw_daily, raw_fuel, raw_urea = fetch_all_data_from_google()
+                
+            st.session_state.settings_dict = {row[0]: row[1] for row in raw_settings if len(row) >= 2}
+            st.session_state.daily_logs = normalize_records(raw_daily, daily_map) if raw_daily else [{"日期": "2026-10-31", "使用人": "劉嘉舜", "目的地": "美光", "出發時間": "07:20", "出發里程": 615049, "返廠時間": "18:30", "返廠里程": 615215, "備註": "系統基準"}]
+            st.session_state.fuel_logs = normalize_records(raw_fuel, fuel_map) if raw_fuel else [{"加油日期": "2026-10-30", "加油時間": "18:40", "加油里程": 614997, "公升數": 130.0, "加油費用": 3816, "加油站名": "中油苗栗站"}]
+            st.session_state.urea_logs = normalize_records(raw_urea, urea_map) if raw_urea else [{"添加日期": "2026-10-30", "添加時間": "18:45", "公升數": 20.0, "費用": 500, "備註": "初始添加", "添加當下里程": 614997}]
+                
+            if "destinations" not in st.session_state:
+                st.session_state.destinations = ["美光", "順益", "廠內調度"]
+                
+            st.session_state.force_refresh = False
+        except Exception as e:
+            st.error(f"資料讀取失敗: {e}")
 
 load_data()
 
@@ -266,8 +259,11 @@ def generate_kertz_excel(year: int, month: int):
     thin = Side(border_style="thin", color="000000")
     border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
     
+    # 關閉自動換行，強制完全置中
     align_center = Alignment(horizontal="center", vertical="center", wrap_text=False)
     align_left = Alignment(horizontal="left", vertical="center", wrap_text=False)
+    # 【Bug 修復】：補回被我手殘刪掉的靠右對齊設定，解決崩潰問題！
+    align_right = Alignment(horizontal="right", vertical="center", wrap_text=False)
     
     ws.page_margins.top = 0.8
     ws.page_margins.bottom = 0.5
@@ -466,6 +462,7 @@ with tab_daily:
             else:
                 st.session_state.sys_msg = f"✅ {f_date.strftime('%m/%d')} 的紀錄已寫入 Google Sheets！"
                 st.session_state.sys_msg_type = "success"
+            st.session_state.force_refresh = True
             fetch_all_data_from_google.clear()
             st.rerun()
 
@@ -510,12 +507,14 @@ with tab_history:
                         ws_daily.update(range_name=f"A{target_row_num}:H{target_row_num}", values=[updated_row])
                         st.session_state.sys_msg = "✅ 日常紀錄已更新！"
                         st.session_state.sys_msg_type = "success"
+                        st.session_state.force_refresh = True
                         fetch_all_data_from_google.clear()
                         st.rerun()
                     if btn_delete:
                         ws_daily.delete_rows(target_row_num)
                         st.session_state.sys_msg = "🗑️ 該筆紀錄已刪除！"
                         st.session_state.sys_msg_type = "warning"
+                        st.session_state.force_refresh = True
                         fetch_all_data_from_google.clear()
                         st.rerun()
 
@@ -543,12 +542,14 @@ with tab_history:
                     ws_fuel.update(range_name=f"A{target_row_num}:F{target_row_num}", values=[upd_row])
                     st.session_state.sys_msg = "✅ 柴油紀錄已更新！"
                     st.session_state.sys_msg_type = "success"
+                    st.session_state.force_refresh = True
                     fetch_all_data_from_google.clear()
                     st.rerun()
                 if btn_del:
                     ws_fuel.delete_rows(target_row_num)
                     st.session_state.sys_msg = "🗑️ 柴油紀錄已刪除！"
                     st.session_state.sys_msg_type = "warning"
+                    st.session_state.force_refresh = True
                     fetch_all_data_from_google.clear()
                     st.rerun()
 
@@ -556,7 +557,7 @@ with tab_history:
         if not st.session_state.urea_logs: st.info("目前沒有尿素資料")
         else:
             def get_urea_date(log):
-                return log.get('添加日期') or log.get('日期') or '未填'
+                return log.get('添加日期') or log.get('日期') or log.get('紀錄日期') or '未填'
 
             log_options = [(idx + 2, f"[{get_urea_date(log)}] {log.get('公升數', 0)}L (里程: {log.get('添加當下里程', '未填')})", log) for idx, log in enumerate(st.session_state.urea_logs)]
             log_options = sorted(log_options, key=lambda x: str(x[2].get('添加日期', '')), reverse=True)
@@ -579,12 +580,14 @@ with tab_history:
                     ws_urea.update(range_name=f"A{target_row_num}:F{target_row_num}", values=[upd_row])
                     st.session_state.sys_msg = "✅ 尿素紀錄已更新！"
                     st.session_state.sys_msg_type = "success"
+                    st.session_state.force_refresh = True
                     fetch_all_data_from_google.clear()
                     st.rerun()
                 if btn_del:
                     ws_urea.delete_rows(target_row_num)
                     st.session_state.sys_msg = "🗑️ 尿素紀錄已刪除！"
                     st.session_state.sys_msg_type = "warning"
+                    st.session_state.force_refresh = True
                     fetch_all_data_from_google.clear()
                     st.rerun()
 
@@ -701,6 +704,7 @@ with tab_stats:
                     
                 st.session_state.sys_msg = f"✅ 【{' ＋ '.join(msg_list)}】補給紀錄已成功寫入 Google Sheets！"
                 st.session_state.sys_msg_type = "success"
+                st.session_state.force_refresh = True
                 fetch_all_data_from_google.clear()
                 st.rerun()
 
@@ -734,5 +738,6 @@ with tab_settings:
             st.session_state.service_target = new_target
             st.session_state.sys_msg = "✅ 所有保養與檢驗目標已更新並存入雲端！"
             st.session_state.sys_msg_type = "success"
+            st.session_state.force_refresh = True
             fetch_all_data_from_google.clear()
             st.rerun()
