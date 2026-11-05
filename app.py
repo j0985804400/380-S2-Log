@@ -43,11 +43,10 @@ if now_time.hour < 4:
 else:
     SHIFT_DATE = TODAY
 
-# ================= 50 台車隊多車註冊架構 (Fleet Registry) =================
+# ================= 50 台車隊多車註冊架構 (Fleet Registry - 純車牌導向) =================
 DEFAULT_FLEET = {
     "380-S2": {
         "plate": "380-S2",
-        "model": "FUSO CANTER 3.49T / 5T 柴油貨車",
         "keeper": "劉嘉舜",
         "default_user": "劉嘉舜",
         "fuel_tank_cap": 130.0,
@@ -67,16 +66,15 @@ st.set_page_config(page_title="車隊管理總控台", layout="centered", initia
 
 st.sidebar.title("🚚 車隊管理中心")
 vehicle_list = list(st.session_state.fleet_registry.keys())
-sidebar_options = vehicle_list + ["➕ 新增車輛註冊 (擴充專用)"]
+sidebar_options = vehicle_list + ["➕ 新增車輛 (擴充專用)"]
 selected_vehicle = st.sidebar.selectbox("選擇管理車輛", sidebar_options, index=0)
 
-# 處理新增車輛註冊邏輯
-if selected_vehicle == "➕ 新增車輛註冊 (擴充專用)":
-    st.title("➕ 新增車輛註冊精靈 (支援 50 台車隊擴充)")
-    st.markdown("填寫以下車輛基本資訊，即可快速納入車隊即時監控系統：")
+# 處理新增車輛註冊邏輯 (僅需車牌與必要參數)
+if selected_vehicle == "➕ 新增車輛 (擴充專用)":
+    st.title("➕ 新增車輛註冊 (支援 50 台車隊擴充)")
+    st.markdown("輸入車牌與基本參數，即可快速納入車隊即時監控系統：")
     with st.form("new_vehicle_form"):
         new_plate = st.text_input("車牌號碼 (如：ABC-1234)").strip().upper()
-        new_model = st.text_input("車款型號 (如：HINO 300 3.49T 柴油貨車 / TOYOTA RAV4)")
         c1, c2 = st.columns(2)
         with c1:
             new_keeper = st.text_input("保管人姓名", value="劉嘉舜")
@@ -104,7 +102,6 @@ if selected_vehicle == "➕ 新增車輛註冊 (擴充專用)":
             else:
                 st.session_state.fleet_registry[new_plate] = {
                     "plate": new_plate,
-                    "model": new_model if new_model else "公務專用車",
                     "keeper": new_keeper,
                     "default_user": new_user,
                     "fuel_tank_cap": float(new_fuel_cap),
@@ -118,12 +115,11 @@ if selected_vehicle == "➕ 新增車輛註冊 (擴充專用)":
                 st.rerun()
     st.stop()
 
-# 當前車輛參數解構
+# 當前車輛參數解構 (純車牌驅動)
 CURRENT_VEHICLE = st.session_state.fleet_registry[selected_vehicle]
 DEFAULT_PLATE = CURRENT_VEHICLE["plate"]
 DEFAULT_KEEPER = CURRENT_VEHICLE["keeper"]
 DEFAULT_USER = CURRENT_VEHICLE["default_user"]
-DEFAULT_MODEL = CURRENT_VEHICLE["model"]
 BASE_TANK_CAPACITY = float(CURRENT_VEHICLE["fuel_tank_cap"])
 HAS_UREA = CURRENT_VEHICLE.get("has_urea", True)
 UREA_TANK_CAPACITY = float(CURRENT_VEHICLE.get("urea_tank_cap", 20.0))
@@ -131,8 +127,8 @@ DOC_CODE = CURRENT_VEHICLE.get("doc_code", "4-33-DC0007B")
 FORM_NAME = CURRENT_VEHICLE.get("form_name", "公務車輛行車紀錄表 Rev.1")
 ACTIVE_SHEET_NAME = CURRENT_VEHICLE.get("sheet_name", f"{DEFAULT_PLATE}_公務車行車紀錄系統")
 
-st.sidebar.markdown(f"**目前監控車輛**：`{DEFAULT_PLATE}`")
-st.sidebar.caption(f"型號：{DEFAULT_MODEL}\n保管人：{DEFAULT_KEEPER}\n油箱：{BASE_TANK_CAPACITY}L | 尿素：{'需添加' if HAS_UREA else '免尿素'}")
+st.sidebar.markdown(f"**目前監控車牌**：`{DEFAULT_PLATE}`")
+st.sidebar.caption(f"👤 保管人：{DEFAULT_KEEPER}\n🛢️ 油箱容量：{BASE_TANK_CAPACITY} L\n💧 尿素系統：{'需添加' if HAS_UREA else '免尿素'}")
 
 # ================= Google API 連線池快取化 =================
 @st.cache_resource(ttl=86400)
@@ -287,7 +283,6 @@ days_to_v = (next_v_date - TODAY).days
 days_to_e = (next_e_date - TODAY).days
 
 # 【Bug 修正：最新里程時序解析防呆】
-# 避免駕駛手滑多按一個 0（如 6150490）造成 max() 永久綁架破壞所有計算
 def get_verified_latest_mileage(daily_logs, fuel_logs, urea_logs):
     valid_entries = []
     for d in daily_logs:
@@ -323,7 +318,7 @@ latest_return_mileage = get_verified_latest_mileage(
 )
 rem_service = st.session_state.service_target - latest_return_mileage
 
-# ================= 柴油消耗運算 (基準錨點零誤差演算法) =================
+# ================= 柴油消耗運算 (基準錨點演算法) =================
 sorted_fuel_logs = sorted(st.session_state.fuel_logs, key=lambda x: safe_int(x.get("加油里程", 0)))
 latest_fuel_mileage = safe_int(sorted_fuel_logs[-1].get("加油里程")) if sorted_fuel_logs else latest_return_mileage
 
@@ -370,10 +365,9 @@ max_liters_added = max([safe_float(f.get("公升數")) for f in sorted_fuel_logs
 learned_tank_cap = float(math.ceil(max_liters_added / 10.0) * 10)
 tank_cap = max(base_tank_capacity, learned_tank_cap)
 
-# 【Bug 修正：基準錨點法計算即時油量】
-# 不再做歷史每筆迴圈累計扣減，直接以最近一次加滿為錨點，只扣除該次加油至今行駛里程消耗
+# 即時油量以最後一次加油為錨點計算
 used_km_since_fuel = max(0, latest_return_mileage - latest_fuel_mileage)
-used_vol_since_fuel = used_km_since_fuel / historical_km_l
+used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
 vol_after_today = max(0.0, min(tank_cap, tank_cap - used_vol_since_fuel))
 
 # ================= 尿素消耗運算 (僅在車輛有尿素系統時啟用) =================
@@ -404,13 +398,13 @@ def calculate_service_prediction(target_mileage):
     km_remaining = target_mileage - latest_return_mileage
     if km_remaining <= 0:
         return "已達保養里程"
-    days_remaining = math.ceil(km_remaining / avg_daily_km)
-    est_date = datetime.now(TW_TZ) + timedelta(days=days_remaining)
+    days_remaining = km_remaining / avg_daily_km
+    est_date = (datetime.now(TW_TZ) + timedelta(days=days_remaining)).date()
     return est_date.strftime("%m/%d")
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
 
-# ================= 1:1 行高極限特化 A4 報表生成 (修復獨立加油與溢出防截斷) =================
+# ================= 1:1 行高極限特化 A4 報表生成 =================
 def generate_kertz_excel(year: int, month: int):
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -494,8 +488,7 @@ def generate_kertz_excel(year: int, month: int):
         if d_str.startswith(prefix):
             f_map_grouped.setdefault(d_str, []).append(fl)
 
-    # 【Bug 修正：全紀錄整合映射】
-    # 建立行陣列，若有獨立加油（休假日或未出車），絕不丟失，自動插入為獨立加油列
+    # 建立行陣列，若有獨立加油（休假日或未出車），自動插入為獨立加油列保證發票 100% 呈現
     combined_rows = []
     for log in m_logs:
         d_key = log.get("日期", "")
@@ -512,7 +505,6 @@ def generate_kertz_excel(year: int, month: int):
             "加油費用": f_info.get("加油費用", "") if f_info else ""
         })
 
-    # 將同日多趟加油剩餘者，或未出車但有加油的項目追加補入，保證發票 100% 呈現
     for d_key, leftover_fuels in f_map_grouped.items():
         for fl in leftover_fuels:
             combined_rows.append({
@@ -603,7 +595,7 @@ st.markdown(f"""
 </style>
 <div class='main-title'>{DEFAULT_PLATE} 車隊管理</div>
 """, unsafe_allow_html=True)
-st.caption(f"連線狀態：🟢 雲端快取極速模式 | 👤 保管人：{DEFAULT_KEEPER} | 🚗 {DEFAULT_MODEL}")
+st.caption(f"連線狀態：🟢 雲端快取極速模式 | 👤 保管人：{DEFAULT_KEEPER}")
 
 svc_color = "#00c04b" if "月" not in est_service_date else "gray"
 svc_text = f"預估 {est_service_date}"
@@ -665,7 +657,6 @@ with tab_daily:
             dest_final = f_dest_custom.strip() if f_dest_custom.strip() else f_dest_select
             diff_km = int(f_ret_mil) - int(f_start_mil)
             
-            # 【Bug 修正：里程輸入安全防呆攔截】
             if diff_km < 0:
                 st.error("❌ 【輸入錯誤】返廠里程不可小於出發里程！請重新檢查儀表板數字。")
             elif diff_km > 1000:
@@ -882,6 +873,7 @@ with tab_stats:
     fuel_days_left = fuel_runnable_km / avg_daily_km
     target_fuel_mil = latest_return_mileage + math.floor(fuel_runnable_km)
     
+    # 【Bug 修正：精準連續時段預測，移除過度進位的 math.ceil】
     if HAS_UREA and urea_km_l > 10.0 and global_fuel_km_l > 0.5:
         usable_urea_vol = max(0.0, rem_urea_vol - 8.0)
         urea_runnable_km = usable_urea_vol * urea_km_l
@@ -890,7 +882,7 @@ with tab_stats:
         
         if urea_runnable_km >= fuel_runnable_km:
             default_station_mil = target_fuel_mil
-            target_date = datetime.now(TW_TZ) + timedelta(days=math.ceil(fuel_days_left))
+            target_date = (datetime.now(TW_TZ) + timedelta(days=fuel_days_left)).date()
             future_urea_vol = max(0.0, rem_urea_vol - (fuel_runnable_km / urea_km_l))
             
             st.success(f"✅ **預估進站點 (柴油主導)：【 里程 {target_fuel_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
@@ -901,7 +893,7 @@ with tab_stats:
                 st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將消耗至剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
         else:
             default_station_mil = target_urea_mil
-            target_date = datetime.now(TW_TZ) + timedelta(days=math.ceil(urea_days_left))
+            target_date = (datetime.now(TW_TZ) + timedelta(days=urea_days_left)).date()
             future_fuel_vol = max(0.0, vol_after_today - (urea_runnable_km / global_fuel_km_l))
             
             st.error(f"🚨 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，請以車上里程表為準)*")
@@ -909,7 +901,7 @@ with tab_stats:
     else:
         # 免尿素車輛之純油料預測
         default_station_mil = target_fuel_mil
-        target_date = datetime.now(TW_TZ) + timedelta(days=math.ceil(fuel_days_left))
+        target_date = (datetime.now(TW_TZ) + timedelta(days=fuel_days_left)).date()
         st.success(f"✅ **預估進站點：【 里程 {target_fuel_mil:,} km 】**\n\n*(約在 {target_date.strftime('%m月%d日')} 抵達，剩餘可用油量約 {usable_fuel_vol:.1f} L)*")
 
     st.divider()
