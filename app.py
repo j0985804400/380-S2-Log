@@ -657,46 +657,6 @@ with tab_daily:
             def_return = int(f_start_mil) + expected_add
             f_ret_mil = st.number_input("返廠里程 (請看儀表板輸入)", value=int(def_return), step=1)
 
-        # 【重大升級：柴油＋尿素一併登記，且具備獨立的補給當下里程輸入框】
-        st.markdown("---")
-        chk_today_supply = st.checkbox("⛽💧 今天有順便加油／加尿素？（勾選後直接填寫發票，一鍵同步）", value=False)
-        
-        supply_mil = int(def_return)
-        supply_station = "中油苗栗站"
-        chk_add_fuel = False
-        df_liters, df_cost = 0.0, 0
-        chk_add_urea = False
-        du_liters, du_cost = 0.0, 0
-        
-        if chk_today_supply:
-            c_sm1, c_sm2 = st.columns([0.6, 0.4])
-            with c_sm1:
-                # 預設補給里程為返廠里程前 2km，且司機可自由修改為加油機當下的真實里程
-                default_sp_mil = int(f_ret_mil) - 2 if int(f_ret_mil) > 10 else int(f_ret_mil)
-                supply_mil = st.number_input("📍 補給當下里程 (中油站儀表數字，不同於返廠抵達里程)", value=int(default_sp_mil), step=1)
-            with c_sm2:
-                supply_station = st.selectbox("補給站點", ["中油苗栗站", "中油新竹站", "其他"])
-                
-            c_f_chk, c_u_chk = st.columns(2)
-            with c_f_chk:
-                chk_add_fuel = st.checkbox("☑️ 登記柴油", value=True)
-            with c_u_chk:
-                chk_add_urea = st.checkbox("☑️ 登記尿素", value=False)
-                
-            if chk_add_fuel:
-                col_f1, col_f2 = st.columns(2)
-                with col_f1:
-                    df_liters = st.number_input("柴油公升數 (L)", value=150.0, step=0.1)
-                with col_f2:
-                    df_cost = st.number_input("柴油實付費用 (元)", value=4300, step=10)
-                    
-            if chk_add_urea:
-                col_u1, col_u2 = st.columns(2)
-                with col_u1:
-                    du_liters = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
-                with col_u2:
-                    du_cost = st.number_input("尿素費用 (元)", value=500, step=10)
-
         submit_daily = st.form_submit_button("💾 儲存今日紀錄，同步至雲端", use_container_width=True)
         
         if submit_daily:
@@ -723,41 +683,11 @@ with tab_daily:
                 default_d_order = ["日期", "使用人", "目的地", "出發時間", "出發里程", "返廠時間", "返廠里程", "備註"]
                 safe_append_row(ACTIVE_SHEET_NAME, "Daily_Logs", daily_record_dict, default_d_order, daily_map)
                 
-                added_tags = []
-                # 寫入柴油補給紀錄 (採用獨立輸入的 supply_mil)
-                if chk_today_supply and chk_add_fuel and float(df_liters) > 0:
-                    fuel_dict = {
-                        "加油日期": f_date.strftime("%Y-%m-%d"),
-                        "加油時間": f_ret_time,
-                        "加油里程": int(supply_mil),
-                        "公升數": float(df_liters),
-                        "加油費用": int(df_cost),
-                        "加油站名": supply_station
-                    }
-                    default_f_order = ["加油日期", "加油時間", "加油里程", "公升數", "加油費用", "加油站名"]
-                    safe_append_row(ACTIVE_SHEET_NAME, "Fuel_Logs", fuel_dict, default_f_order, fuel_map)
-                    added_tags.append("柴油")
-                    
-                # 寫入尿素補給紀錄 (採用獨立輸入的 supply_mil)
-                if chk_today_supply and chk_add_urea and float(du_liters) > 0:
-                    urea_dict = {
-                        "添加日期": f_date.strftime("%Y-%m-%d"),
-                        "添加時間": f_ret_time,
-                        "公升數": float(du_liters),
-                        "費用": int(du_cost),
-                        "備註": "",
-                        "添加當下里程": int(supply_mil)
-                    }
-                    default_u_order = ["添加日期", "添加時間", "公升數", "費用", "備註", "添加當下里程"]
-                    safe_append_row(ACTIVE_SHEET_NAME, "Urea_Logs", urea_dict, default_u_order, urea_map)
-                    added_tags.append("尿素")
-                
                 if diff_km > (expected_km + 80):
                     st.session_state.sys_msg = f"⚠️ 【里程較長提醒】本次增加了 {diff_km} km。紀錄已成功存入，請確認是否有繞道或漏填！"
                     st.session_state.sys_msg_type = "warning"
                 else:
-                    supply_tag = f"（含 {' ＋ '.join(added_tags)} 補給發票）" if added_tags else ""
-                    st.session_state.sys_msg = f"✅ {f_date.strftime('%m/%d')} 的行車紀錄{supply_tag}已寫入 Google Sheets！"
+                    st.session_state.sys_msg = f"✅ {f_date.strftime('%m/%d')} 的紀錄已寫入 Google Sheets！"
                     st.session_state.sys_msg_type = "success"
                     
                 fetch_all_data.clear() 
