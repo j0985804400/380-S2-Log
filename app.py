@@ -895,44 +895,97 @@ with tab_stats:
     st.divider()
     st.subheader("📊 智慧進站預測 (依車上里程表為準)")
     
+    # 1. 歷史平均加油間隔里程推算 (習慣進站點)
+    fuel_intervals = []
+    if len(sorted_fuel_logs) >= 2:
+        for i in range(1, len(sorted_fuel_logs)):
+            d = safe_int(sorted_fuel_logs[i].get("加油里程")) - safe_int(sorted_fuel_logs[i-1].get("加油里程"))
+            if 100 <= d <= 1200:
+                fuel_intervals.append(d)
+
+    avg_fuel_interval_km = round(sum(fuel_intervals) / len(fuel_intervals)) if fuel_intervals else round((tank_cap - 35) * global_fuel_km_l)
+    habitual_target_fuel_mil = latest_fuel_mileage + avg_fuel_interval_km
+    
+    # 2. 柴油極限乾底里程 (0L 拋錨線)
+    fuel_absolute_km = vol_after_today * global_fuel_km_l
+    fuel_limit_mil = latest_return_mileage + math.floor(fuel_absolute_km)
+    
+    # 3. 柴油安全進站底線 (扣除 60km 安全油底防線)
     safe_fuel_vol = 60 / global_fuel_km_l
     usable_fuel_vol = max(0.0, vol_after_today - safe_fuel_vol)
     fuel_runnable_km = usable_fuel_vol * global_fuel_km_l
-    fuel_days_left = fuel_runnable_km / avg_daily_km
     target_fuel_mil = latest_return_mileage + math.floor(fuel_runnable_km)
     
-    # 【核心計算：以最後紀錄日期為基準，計算未來出車第幾趟抵達進站點】
-    trips_until_fuel = max(1, math.ceil(fuel_days_left)) if usable_fuel_vol > 0 else 1
-    target_fuel_date = latest_mil_date + timedelta(days=trips_until_fuel)
+    # 預計習慣進站點剩餘里程與日期
+    rem_habitual_km = max(0, habitual_target_fuel_mil - latest_return_mileage)
+    trips_until_habitual = max(1, math.ceil(rem_habitual_km / avg_daily_km)) if rem_habitual_km > 0 else 1
+    target_fuel_date = latest_mil_date + timedelta(days=trips_until_habitual)
     
+    # 4. 尿素極限與安全里程推算
     if HAS_UREA and urea_km_l > 10.0 and global_fuel_km_l > 0.5:
+        # 尿素極限耗盡里程 (0L 鎖動力限速線)
+        urea_absolute_km = rem_urea_vol * urea_km_l
+        urea_limit_mil = latest_return_mileage + math.floor(urea_absolute_km)
+        
+        # 尿素安全補充里程 (剩 8L 警戒線)
         usable_urea_vol = max(0.0, rem_urea_vol - 8.0)
         urea_runnable_km = usable_urea_vol * urea_km_l
-        urea_days_left = urea_runnable_km / avg_daily_km
         target_urea_mil = latest_return_mileage + math.floor(urea_runnable_km)
         
-        trips_until_urea = max(1, math.ceil(urea_days_left)) if usable_urea_vol > 0 else 1
+        trips_until_urea = max(1, math.ceil(urea_runnable_km / avg_daily_km)) if usable_urea_vol > 0 else 1
         target_urea_date = latest_mil_date + timedelta(days=trips_until_urea)
         
-        if urea_runnable_km >= fuel_runnable_km:
-            default_station_mil = target_fuel_mil
-            future_urea_vol = max(0.0, rem_urea_vol - (fuel_runnable_km / urea_km_l))
+        # 判斷柴油習慣進站與尿素警戒誰先到
+        if urea_runnable_km >= (habitual_target_fuel_mil - latest_return_mileage):
+            default_station_mil = habitual_target_fuel_mil
+            future_urea_vol = max(0.0, rem_urea_vol - ((habitual_target_fuel_mil - latest_return_mileage) / urea_km_l))
             
-            st.success(f"✅ **預估進站點 (柴油主導)：【 里程 {target_fuel_mil:,} km 】**\n\n*(最晚請於 **{target_fuel_date.strftime('%m月%d日')}** 進站加油，請以車上里程表為準)*")
+            st.success(f"🎯 **預計進站點 (依平均習慣)：【 里程 {habitual_target_fuel_mil:,} km 】**\n\n*(最晚請於 **{target_fuel_date.strftime('%m月%d日')}** 進站加油，距今還可跑 **{rem_habitual_km:,} km**)*")
             
             if future_urea_vol >= 8.0:
-                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將從目前 {rem_urea_vol:.1f}L 消耗至約 **{future_urea_vol:.1f} 公升** (安全)，單純補滿柴油即可！")
+                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{habitual_target_fuel_mil:,} km** 時，屆時尿素將從目前 {rem_urea_vol:.1f}L 消耗至約 **{future_urea_vol:.1f} 公升** (仍很充足)，單純補滿柴油即可！")
             else:
-                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{target_fuel_mil:,} km** 時，屆時尿素將消耗至剩 **{future_urea_vol:.1f} 公升** (逼近防護線)，建議兩管齊下一次加滿！")
+                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{habitual_target_fuel_mil:,} km** 時，屆時尿素將消耗至剩 **{future_urea_vol:.1f} 公升** (逼近 8L 防線)，建議兩管齊下一次加滿！")
         else:
             default_station_mil = target_urea_mil
             future_fuel_vol = max(0.0, vol_after_today - (urea_runnable_km / global_fuel_km_l))
             
             st.error(f"🚨 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(最晚請於 **{target_urea_date.strftime('%m月%d日')}** 進站補充尿素，請以車上里程表為準)*")
             st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n開到 **{target_urea_mil:,} km** 時尿素將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
+            
+        # 顯示雙極限安全雷達卡片
+        st.markdown(f"""
+<div style="background-color: rgba(128,128,128,0.08); padding: 12px; border-radius: 8px; margin: 12px 0; border: 1px solid rgba(128,128,128,0.2);">
+    <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">📡 雙指標極限安全雷達</div>
+    <div style="display: flex; justify-content: space-between; font-size: 13px; line-height: 1.8;">
+        <div>
+            <b>⛽ 柴油里程指標：</b><br>
+            • 習慣進站：<b>{habitual_target_fuel_mil:,} km</b> (平均每 {avg_fuel_interval_km}km 加油)<br>
+            • 安全底線：<b>{target_fuel_mil:,} km</b> (留 60km 底油，剩 {int(fuel_runnable_km)} km)<br>
+            • <span style="color: #ff4b4b;">物理乾底極限</span>：<b>{fuel_limit_mil:,} km</b> (0L 拋錨線，剩 {int(fuel_absolute_km)} km)
+        </div>
+        <div style="border-left: 1px solid rgba(128,128,128,0.3); padding-left: 12px;">
+            <b>💧 尿素里程指標：</b><br>
+            • 警戒補充點：<b>{target_urea_mil:,} km</b> (剩 8L 防護線，剩 {int(urea_runnable_km)} km)<br>
+            • <span style="color: #ff4b4b;">徹底耗盡極限</span>：<b>{urea_limit_mil:,} km</b> (0L 鎖轉速限速線，剩 {int(urea_absolute_km)} km)
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
     else:
-        default_station_mil = target_fuel_mil
-        st.success(f"✅ **預估進站點：【 里程 {target_fuel_mil:,} km 】**\n\n*(最晚請於 **{target_fuel_date.strftime('%m月%d日')}** 進站，剩餘可用油量約 {usable_fuel_vol:.1f} L)*")
+        default_station_mil = habitual_target_fuel_mil
+        st.success(f"🎯 **預計進站點 (依平均習慣)：【 里程 {habitual_target_fuel_mil:,} km 】**\n\n*(最晚請於 **{target_fuel_date.strftime('%m月%d日')}** 進站加油，距今還可跑 **{rem_habitual_km:,} km**)*")
+        st.markdown(f"""
+<div style="background-color: rgba(128,128,128,0.08); padding: 12px; border-radius: 8px; margin: 12px 0; border: 1px solid rgba(128,128,128,0.2);">
+    <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">📡 柴油極限安全雷達</div>
+    <div style="font-size: 13px; line-height: 1.8;">
+        • 習慣進站：<b>{habitual_target_fuel_mil:,} km</b> (平均每 {avg_fuel_interval_km}km 加油)<br>
+        • 安全底線：<b>{target_fuel_mil:,} km</b> (留 60km 底油，剩 {int(fuel_runnable_km)} km)<br>
+        • <span style="color: #ff4b4b;">物理乾底極限</span>：<b>{fuel_limit_mil:,} km</b> (0L 拋錨線，剩 {int(fuel_absolute_km)} km)
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
     st.divider()
     st.markdown(f"**目前車輛剩餘狀況** (以最新里程 {latest_return_mileage:,} km 結算)")
