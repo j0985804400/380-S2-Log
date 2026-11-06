@@ -379,10 +379,12 @@ def get_avg_daily_km(logs):
 avg_daily_km = get_avg_daily_km(st.session_state.daily_logs)
 
 # 油箱容量動態自動學習並鎖定
-max_liters_added = max([safe_float(f.get("公升數")) for f in sorted_fuel_logs]) if sorted_fuel_logs else 130.0
-learned_tank_cap = float(math.ceil(max_liters_added / 10.0) * 10)
-settings_tank_cap = safe_float(st.session_state.settings_dict.get("FUEL_TANK_CAPACITY"), 130.0)
-tank_cap = max(130.0, settings_tank_cap, learned_tank_cap)
+# 油箱容量推算：依儀表板指針殘量反推，標準柴油大貨車油箱為 200L
+settings_tank_cap = safe_float(st.session_state.settings_dict.get("FUEL_TANK_CAPACITY"), 200.0)
+max_liters_added = max([safe_float(f.get("公升數")) for f in sorted_fuel_logs]) if sorted_fuel_logs else 150.0
+# 若加油公升數達到 150L 以上且尚有殘油，油箱基準鎖定為 200L
+learned_tank_cap = 200.0 if max_liters_added >= 140.0 else float(math.ceil(max_liters_added / 10.0) * 10)
+tank_cap = max(200.0, settings_tank_cap, learned_tank_cap)
 
 # 即時剩餘油量推估
 used_km_since_fuel = max(0, latest_return_mileage - latest_fuel_mileage)
@@ -1056,13 +1058,13 @@ with tab_settings:
         new_v_date = st.date_input("下次驗車到期日", next_v_date)
         new_e_date = st.date_input("下次驗排氣到期日", next_e_date)
         st.markdown("---")
-        st.markdown(f"**車輛總油箱容量**：目前由系統動態鎖定為 **{int(tank_cap)} L** (根據歷史加油紀錄自動校正)")
+        new_tank_cap = st.number_input("車輛總油箱容量 (公升 L)", value=float(tank_cap), step=10.0, help="標準大貨車原廠油箱為 200L，可依實車改裝規格手動微調")
         
         submit_settings = st.form_submit_button("💾 儲存所有設定", use_container_width=True)
         if submit_settings:
             update_vals = [
                 ["SERVICE_TARGET", new_target],
-                ["FUEL_TANK_CAPACITY", float(tank_cap)],
+                ["FUEL_TANK_CAPACITY", float(new_tank_cap)],
                 ["NEXT_VEHICLE_INSP", new_v_date.strftime("%Y-%m-%d")],
                 ["NEXT_EMISSIONS_INSP", new_e_date.strftime("%Y-%m-%d")]
             ]
