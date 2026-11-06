@@ -308,6 +308,23 @@ latest_return_mileage, latest_mil_date = get_verified_latest_mileage_and_date(
     st.session_state.fuel_logs,
     st.session_state.urea_logs
 )
+
+# 【核心修復：行車出發里程專用解析】
+# 出發里程必須是「前次出車的返廠里程」，絕不能被途中加油/加尿素的里程覆蓋！
+def get_last_daily_return_mileage(daily_logs, fallback_mil):
+    valid_returns = []
+    for d in daily_logs:
+        mil = safe_int(d.get("返廠里程"))
+        date_str = str(d.get("日期", "")).replace("/", "-")
+        time_str = str(d.get("返廠時間", "23:59"))
+        if 1000 <= mil <= 1500000 and date_str:
+            valid_returns.append((date_str, time_str, mil))
+    if valid_returns:
+        valid_returns.sort(key=lambda x: (x[0], x[1]))
+        return valid_returns[-1][2]
+    return fallback_mil
+
+last_daily_return_mil = get_last_daily_return_mileage(st.session_state.daily_logs, latest_return_mileage)
 rem_service = st.session_state.service_target - latest_return_mileage
 
 # 【需求實現：今天里程若已輸入完成，表單預設日期自動換成明天！】
@@ -649,7 +666,7 @@ with tab_daily:
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             f_start_time = st.text_input("出發時間", value="07:20")
-            f_start_mil = st.number_input("出發里程 (預設前次，可手動修改)", value=int(latest_return_mileage), step=1)
+            f_start_mil = st.number_input("出發里程 (預設前次回廠，可手動修改)", value=int(last_daily_return_mil), step=1)
         with col_t2:
             f_ret_time = st.text_input("返廠時間", value=now_time.strftime("%H:%M"))
             # 【需求實現：美光預估公里數精確調校為 168 km】
