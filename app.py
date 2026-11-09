@@ -421,8 +421,9 @@ def calculate_service_prediction(target_mileage):
     km_remaining = target_mileage - latest_return_mileage
     if km_remaining <= 0:
         return "已達保養里程"
-    trips_remaining = math.ceil(km_remaining / avg_daily_km)
-    est_date = latest_mil_date + timedelta(days=trips_remaining)
+    trips_remaining = max(1, math.ceil(km_remaining / avg_daily_km))
+    base_planning_date = TOMORROW if has_today_completed_log else TODAY
+    est_date = base_planning_date + timedelta(days=trips_remaining - 1)
     return est_date.strftime("%m/%d")
 
 est_service_date = calculate_service_prediction(st.session_state.service_target)
@@ -916,10 +917,15 @@ with tab_stats:
     fuel_runnable_km = usable_fuel_vol * global_fuel_km_l
     target_fuel_mil = latest_return_mileage + math.floor(fuel_runnable_km)
     
+    # 【重大修正：動態考量休假日與今日出車狀態之精準日期投影】
+    # 若今日已出車返廠：未來出車從明天 (TOMORROW) 起算
+    # 若今日尚未出車 (或昨日休假未跑)：未來出車從今天 (TODAY) 起算！
+    base_planning_date = TOMORROW if has_today_completed_log else TODAY
+
     # 預計習慣進站點剩餘里程與日期
     rem_habitual_km = max(0, habitual_target_fuel_mil - latest_return_mileage)
     trips_until_habitual = max(1, math.ceil(rem_habitual_km / avg_daily_km)) if rem_habitual_km > 0 else 1
-    target_fuel_date = latest_mil_date + timedelta(days=trips_until_habitual)
+    target_fuel_date = base_planning_date + timedelta(days=trips_until_habitual - 1)
     
     # 4. 尿素極限與安全里程推算
     if HAS_UREA and urea_km_l > 10.0 and global_fuel_km_l > 0.5:
@@ -933,7 +939,7 @@ with tab_stats:
         target_urea_mil = latest_return_mileage + math.floor(urea_runnable_km)
         
         trips_until_urea = max(1, math.ceil(urea_runnable_km / avg_daily_km)) if usable_urea_vol > 0 else 1
-        target_urea_date = latest_mil_date + timedelta(days=trips_until_urea)
+        target_urea_date = base_planning_date + timedelta(days=trips_until_urea - 1)
         
         # 判斷柴油習慣進站與尿素警戒誰先到
         if urea_runnable_km >= (habitual_target_fuel_mil - latest_return_mileage):
