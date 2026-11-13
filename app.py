@@ -402,7 +402,7 @@ HAS_UREA = len(st.session_state.urea_logs) > 0 or DEFAULT_PLATE == "380-S2"
 
 if HAS_UREA and st.session_state.urea_logs:
     sorted_urea = sorted(st.session_state.urea_logs, key=lambda x: str(x.get("添加日期", "")))
-    urea_with_mil = [u for u in sorted_urea if str(u.get("添加當下里程", "")).isdigit()]
+    urea_with_mil = [u for u in sorted_urea if safe_int(u.get("添加當下里程")) > 0]
     urea_with_mil = sorted(urea_with_mil, key=lambda x: safe_int(x["添加當下里程"]))
     
     if len(urea_with_mil) >= 2:
@@ -943,22 +943,25 @@ with tab_stats:
         trips_until_urea = max(1, math.ceil(rem_habitual_urea_km / avg_daily_km)) if rem_habitual_urea_km > 0 else 1
         target_urea_date = base_planning_date + timedelta(days=trips_until_urea - 1)
         
-        # 判斷柴油習慣進站與尿素習慣補充誰先到
-        if rem_habitual_urea_km >= rem_habitual_km:
+        # 下下次加油預估里程 (下次加油 + 平均加油間隔)
+        next_next_fuel_mil = habitual_target_fuel_mil + avg_fuel_interval_km
+
+        # 判斷邏輯：以尿素「8L 安全底線 (target_urea_mil)」能不能撐到「下下次加油」為準
+        if target_urea_mil >= habitual_target_fuel_mil:
             default_station_mil = habitual_target_fuel_mil
-            km_diff_after_fuel = rem_habitual_urea_km - rem_habitual_km
-            
             st.success(f"🎯 **預計進站點 (依平均習慣)：【 里程 {habitual_target_fuel_mil:,} km 】**\n\n*(最晚請於 **{target_fuel_date.strftime('%m月%d日')}** 進站加油，距今還可跑 **{rem_habitual_km:,} km**)*")
             
-            if km_diff_after_fuel > 300:
-                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{habitual_target_fuel_mil:,} km** 時，距離下次習慣補尿素（**{habitual_target_urea_mil:,} km**）還有約 **{km_diff_after_fuel:,} km**，單純補滿柴油即可！")
+            if target_urea_mil >= next_next_fuel_mil:
+                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n尿素安全底線在 **{target_urea_mil:,} km**，撐到**下下次加油（約 {next_next_fuel_mil:,} km）**再一起補尿素都還來得及！")
             else:
-                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{habitual_target_fuel_mil:,} km** 時，也快到習慣補尿素里程（**{habitual_target_urea_mil:,} km**）了，建議兩管齊下一次加滿！")
+                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n尿素安全底線（**{target_urea_mil:,} km**）撐不到下下次加油（**{next_next_fuel_mil:,} km**），建議這次加油順便一起補滿！")
         else:
-            default_station_mil = habitual_target_urea_mil
+            default_station_mil = target_urea_mil
+            trips_until_urea_safe = max(1, math.ceil(urea_runnable_km / avg_daily_km)) if usable_urea_vol > 0 else 1
+            target_urea_safe_date = base_planning_date + timedelta(days=trips_until_urea_safe - 1)
             
-            st.warning(f"💧 **尿素預估先到點：【 里程 {habitual_target_urea_mil:,} km 】**\n\n*(建議於 **{target_urea_date.strftime('%m月%d日')}** 前後進站補充尿素，距今還可跑 **{rem_habitual_urea_km:,} km**)*")
-            st.info(f"💡 **決策：【以補尿素為主，柴油可順便補滿】**\n\n習慣補尿素點（**{habitual_target_urea_mil:,} km**）比下次加油點（**{habitual_target_fuel_mil:,} km**）更早到，進站時可一併補滿。")
+            st.warning(f"💧 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(建議於 **{target_urea_safe_date.strftime('%m月%d日')}** 前後進站補充尿素，距今還可跑 **{int(urea_runnable_km):,} km**)*")
+            st.info(f"💡 **決策：【以補尿素為主，柴油可順便補滿】**\n\n尿素安全底線（**{target_urea_mil:,} km**）比下次加油點（**{habitual_target_fuel_mil:,} km**）更早到，進站時可一併補滿。")
             
         # 顯示雙指標進站安全雷達卡片 (僅保留預估值與安全值)
         st.markdown(f"""
