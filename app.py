@@ -392,10 +392,12 @@ used_vol_since_fuel = used_km_since_fuel / global_fuel_km_l
 vol_after_today = max(0.0, min(tank_cap, tank_cap - used_vol_since_fuel))
 
 # ================= 尿素消耗運算 =================
-UREA_TANK_CAPACITY = 20.0
+UREA_TANK_CAPACITY = safe_float(st.session_state.settings_dict.get("UREA_TANK_CAPACITY"), 20.0)
 urea_km_l = 170.0
 rem_urea_vol = UREA_TANK_CAPACITY
 driven_since_urea = 0
+urea_with_mil = []
+last_u_mil = latest_return_mileage
 HAS_UREA = len(st.session_state.urea_logs) > 0 or DEFAULT_PLATE == "380-S2"
 
 if HAS_UREA and st.session_state.urea_logs:
@@ -896,7 +898,7 @@ with tab_stats:
     st.divider()
     st.subheader("📊 智慧進站預測 (依車上里程表為準)")
     
-    # 1. 歷史平均加油間隔里程推算 (習慣進站點)
+    # 1. 歷史平均加油間隔里程推算 (柴油預估進站點)
     fuel_intervals = []
     if len(sorted_fuel_logs) >= 2:
         for i in range(1, len(sorted_fuel_logs)):
@@ -907,19 +909,13 @@ with tab_stats:
     avg_fuel_interval_km = round(sum(fuel_intervals) / len(fuel_intervals)) if fuel_intervals else round((tank_cap - 35) * global_fuel_km_l)
     habitual_target_fuel_mil = latest_fuel_mileage + avg_fuel_interval_km
     
-    # 2. 柴油極限乾底里程 (0L 拋錨線)
-    fuel_absolute_km = vol_after_today * global_fuel_km_l
-    fuel_limit_mil = latest_return_mileage + math.floor(fuel_absolute_km)
-    
-    # 3. 柴油安全進站底線 (扣除 60km 安全油底防線)
+    # 2. 柴油安全底線 (扣除 60km 安全油底防線)
     safe_fuel_vol = 60 / global_fuel_km_l
     usable_fuel_vol = max(0.0, vol_after_today - safe_fuel_vol)
     fuel_runnable_km = usable_fuel_vol * global_fuel_km_l
     target_fuel_mil = latest_return_mileage + math.floor(fuel_runnable_km)
     
-    # 【重大修正：動態考量休假日與今日出車狀態之精準日期投影】
-    # 若今日已出車返廠：未來出車從明天 (TOMORROW) 起算
-    # 若今日尚未出車 (或昨日休假未跑)：未來出車從今天 (TODAY) 起算！
+    # 動態考量休假日與今日出車狀態之精準日期投影
     base_planning_date = TOMORROW if has_today_completed_log else TODAY
 
     # 預計習慣進站點剩餘里程與日期
@@ -927,53 +923,57 @@ with tab_stats:
     trips_until_habitual = max(1, math.ceil(rem_habitual_km / avg_daily_km)) if rem_habitual_km > 0 else 1
     target_fuel_date = base_planning_date + timedelta(days=trips_until_habitual - 1)
     
-    # 4. 尿素極限與安全里程推算
+    # 3. 尿素習慣間隔與安全值推算 (不依賴 20L 桶去推極限)
     if HAS_UREA and urea_km_l > 10.0 and global_fuel_km_l > 0.5:
-        # 尿素極限耗盡里程 (0L 鎖動力限速線)
-        urea_absolute_km = rem_urea_vol * urea_km_l
-        urea_limit_mil = latest_return_mileage + math.floor(urea_absolute_km)
+        urea_intervals = []
+        if len(urea_with_mil) >= 2:
+            for i in range(1, len(urea_with_mil)):
+                d = safe_int(urea_with_mil[i].get("添加當下里程")) - safe_int(urea_with_mil[i-1].get("添加當下里程"))
+                if 300 <= d <= 5000:
+                    urea_intervals.append(d)
+        avg_urea_interval_km = round(sum(urea_intervals) / len(urea_intervals)) if urea_intervals else round((UREA_TANK_CAPACITY - 8.0) * urea_km_l)
+        habitual_target_urea_mil = last_u_mil + avg_urea_interval_km
+        rem_habitual_urea_km = max(0, habitual_target_urea_mil - latest_return_mileage)
         
-        # 尿素安全補充里程 (剩 8L 警戒線)
+        # 尿素安全補充里程 (剩 8L 防護線)
         usable_urea_vol = max(0.0, rem_urea_vol - 8.0)
         urea_runnable_km = usable_urea_vol * urea_km_l
         target_urea_mil = latest_return_mileage + math.floor(urea_runnable_km)
         
-        trips_until_urea = max(1, math.ceil(urea_runnable_km / avg_daily_km)) if usable_urea_vol > 0 else 1
+        trips_until_urea = max(1, math.ceil(rem_habitual_urea_km / avg_daily_km)) if rem_habitual_urea_km > 0 else 1
         target_urea_date = base_planning_date + timedelta(days=trips_until_urea - 1)
         
-        # 判斷柴油習慣進站與尿素警戒誰先到
-        if urea_runnable_km >= (habitual_target_fuel_mil - latest_return_mileage):
+        # 判斷柴油習慣進站與尿素習慣補充誰先到
+        if rem_habitual_urea_km >= rem_habitual_km:
             default_station_mil = habitual_target_fuel_mil
-            future_urea_vol = max(0.0, rem_urea_vol - ((habitual_target_fuel_mil - latest_return_mileage) / urea_km_l))
+            km_diff_after_fuel = rem_habitual_urea_km - rem_habitual_km
             
             st.success(f"🎯 **預計進站點 (依平均習慣)：【 里程 {habitual_target_fuel_mil:,} km 】**\n\n*(最晚請於 **{target_fuel_date.strftime('%m月%d日')}** 進站加油，距今還可跑 **{rem_habitual_km:,} km**)*")
             
-            if future_urea_vol >= 8.0:
-                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{habitual_target_fuel_mil:,} km** 時，屆時尿素將從目前 {rem_urea_vol:.1f}L 消耗至約 **{future_urea_vol:.1f} 公升** (仍很充足)，單純補滿柴油即可！")
+            if km_diff_after_fuel > 300:
+                st.info(f"💡 **決策：【這次只要加柴油就好】**\n\n開到 **{habitual_target_fuel_mil:,} km** 時，距離下次習慣補尿素（**{habitual_target_urea_mil:,} km**）還有約 **{km_diff_after_fuel:,} km**，單純補滿柴油即可！")
             else:
-                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{habitual_target_fuel_mil:,} km** 時，屆時尿素將消耗至剩 **{future_urea_vol:.1f} 公升** (逼近 8L 防線)，建議兩管齊下一次加滿！")
+                st.warning(f"🟡 **決策：【柴油 ＋ 尿素 順便一起加】**\n\n開到 **{habitual_target_fuel_mil:,} km** 時，也快到習慣補尿素里程（**{habitual_target_urea_mil:,} km**）了，建議兩管齊下一次加滿！")
         else:
-            default_station_mil = target_urea_mil
-            future_fuel_vol = max(0.0, vol_after_today - (urea_runnable_km / global_fuel_km_l))
+            default_station_mil = habitual_target_urea_mil
             
-            st.error(f"🚨 **尿素提早告急：【 里程 {target_urea_mil:,} km 】**\n\n*(最晚請於 **{target_urea_date.strftime('%m月%d日')}** 進站補充尿素，請以車上里程表為準)*")
-            st.warning(f"💡 **決策：【以補尿素為主，柴油順便加滿】**\n\n開到 **{target_urea_mil:,} km** 時尿素將跌破 8L 警戒！屆時柴油約剩 **{future_fuel_vol:.1f} 公升**，請一併補滿。")
+            st.warning(f"💧 **尿素預估先到點：【 里程 {habitual_target_urea_mil:,} km 】**\n\n*(建議於 **{target_urea_date.strftime('%m月%d日')}** 前後進站補充尿素，距今還可跑 **{rem_habitual_urea_km:,} km**)*")
+            st.info(f"💡 **決策：【以補尿素為主，柴油可順便補滿】**\n\n習慣補尿素點（**{habitual_target_urea_mil:,} km**）比下次加油點（**{habitual_target_fuel_mil:,} km**）更早到，進站時可一併補滿。")
             
-        # 顯示雙極限安全雷達卡片
+        # 顯示雙指標進站安全雷達卡片 (僅保留預估值與安全值)
         st.markdown(f"""
 <div style="background-color: rgba(128,128,128,0.08); padding: 12px; border-radius: 8px; margin: 12px 0; border: 1px solid rgba(128,128,128,0.2);">
-    <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">📡 雙指標極限安全雷達</div>
+    <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">📡 雙指標進站安全雷達</div>
     <div style="display: flex; justify-content: space-between; font-size: 13px; line-height: 1.8;">
         <div>
             <b>⛽ 柴油里程指標：</b><br>
-            • 習慣進站：<b>{habitual_target_fuel_mil:,} km</b> (平均每 {avg_fuel_interval_km}km 加油)<br>
-            • 安全底線：<b>{target_fuel_mil:,} km</b> (留 60km 底油，剩 {int(fuel_runnable_km)} km)<br>
-            • <span style="color: #ff4b4b;">物理乾底極限</span>：<b>{fuel_limit_mil:,} km</b> (0L 拋錨線，剩 {int(fuel_absolute_km)} km)
+            • 預估進站：<b>{habitual_target_fuel_mil:,} km</b> (平均每 {avg_fuel_interval_km}km 加油)<br>
+            • 安全底線：<b>{target_fuel_mil:,} km</b> (留 60km 底油，剩 {int(fuel_runnable_km)} km)
         </div>
         <div style="border-left: 1px solid rgba(128,128,128,0.3); padding-left: 12px;">
             <b>💧 尿素里程指標：</b><br>
-            • 警戒補充點：<b>{target_urea_mil:,} km</b> (剩 8L 防護線，剩 {int(urea_runnable_km)} km)<br>
-            • <span style="color: #ff4b4b;">徹底耗盡極限</span>：<b>{urea_limit_mil:,} km</b> (0L 鎖轉速限速線，剩 {int(urea_absolute_km)} km)
+            • 預估補充：<b>{habitual_target_urea_mil:,} km</b> (平均每 {avg_urea_interval_km}km 補充)<br>
+            • 安全底線：<b>{target_urea_mil:,} km</b> (剩 8L 防護線，剩 {int(urea_runnable_km)} km)
         </div>
     </div>
 </div>
@@ -984,11 +984,10 @@ with tab_stats:
         st.success(f"🎯 **預計進站點 (依平均習慣)：【 里程 {habitual_target_fuel_mil:,} km 】**\n\n*(最晚請於 **{target_fuel_date.strftime('%m月%d日')}** 進站加油，距今還可跑 **{rem_habitual_km:,} km**)*")
         st.markdown(f"""
 <div style="background-color: rgba(128,128,128,0.08); padding: 12px; border-radius: 8px; margin: 12px 0; border: 1px solid rgba(128,128,128,0.2);">
-    <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">📡 柴油極限安全雷達</div>
+    <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">📡 柴油進站安全雷達</div>
     <div style="font-size: 13px; line-height: 1.8;">
-        • 習慣進站：<b>{habitual_target_fuel_mil:,} km</b> (平均每 {avg_fuel_interval_km}km 加油)<br>
-        • 安全底線：<b>{target_fuel_mil:,} km</b> (留 60km 底油，剩 {int(fuel_runnable_km)} km)<br>
-        • <span style="color: #ff4b4b;">物理乾底極限</span>：<b>{fuel_limit_mil:,} km</b> (0L 拋錨線，剩 {int(fuel_absolute_km)} km)
+        • 預估進站：<b>{habitual_target_fuel_mil:,} km</b> (平均每 {avg_fuel_interval_km}km 加油)<br>
+        • 安全底線：<b>{target_fuel_mil:,} km</b> (留 60km 底油，剩 {int(fuel_runnable_km)} km)
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -1048,7 +1047,7 @@ with tab_stats:
             chk_urea = st.checkbox("☑️ 登記尿素", value=False)
             col_u1, col_u2 = st.columns(2)
             with col_u1:
-                urea_l = st.number_input("尿素公升數 (L)", value=20.0, step=1.0)
+                urea_l = st.number_input("尿素公升數 (L)", value=15.0, step=0.1)
             with col_u2:
                 urea_cost = st.number_input("尿素費用 (元)", value=500, step=10)
             
@@ -1118,6 +1117,7 @@ with tab_settings:
         new_e_date = st.date_input("下次驗排氣到期日", next_e_date)
         st.markdown("---")
         new_tank_cap = st.number_input("車輛總油箱容量 (公升 L)", value=float(tank_cap), step=10.0, help="標準大貨車原廠油箱為 200L，可依實車改裝規格手動微調")
+        new_urea_cap = st.number_input("尿素加滿基準容量 (公升 L)", value=float(UREA_TANK_CAPACITY), step=0.5, help="若去加油站加跳槍通常只到約 17~18L，可在此調成實際跳槍滿桶量，預測會更準")
         
         submit_settings = st.form_submit_button("💾 儲存所有設定", use_container_width=True)
         if submit_settings:
@@ -1125,9 +1125,10 @@ with tab_settings:
                 ["SERVICE_TARGET", new_target],
                 ["FUEL_TANK_CAPACITY", float(new_tank_cap)],
                 ["NEXT_VEHICLE_INSP", new_v_date.strftime("%Y-%m-%d")],
-                ["NEXT_EMISSIONS_INSP", new_e_date.strftime("%Y-%m-%d")]
+                ["NEXT_EMISSIONS_INSP", new_e_date.strftime("%Y-%m-%d")],
+                ["UREA_TANK_CAPACITY", float(new_urea_cap)]
             ]
-            get_worksheet(ACTIVE_SHEET_NAME, "Settings").update(range_name="A1:B4", values=update_vals)
+            get_worksheet(ACTIVE_SHEET_NAME, "Settings").update(range_name="A1:B5", values=update_vals)
             st.session_state.sys_msg = "✅ 所有設定已更新並存入雲端！"
             st.session_state.sys_msg_type = "success"
             fetch_all_data.clear()
